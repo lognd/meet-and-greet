@@ -1,0 +1,29 @@
+# Build artifacts
+cmake-build-*/
+build/
+*.o
+*.a
+*.so
+*.dll
+*.exe
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Runtime
+*.db
+*.log
+*.sqlite
+
+# Config (keep app.toml.example, not app.toml with real tokens)
