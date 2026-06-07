@@ -1,28 +1,24 @@
-from dataclasses import dataclass, field
-from typing import Optional
+from pydantic import BaseModel, Field
 
 
-@dataclass
-class Student:
+class Student(BaseModel):
     uuid: str
-    student_id_enc: str          # XOR-encrypted hex of student ID
+    student_id_enc: str = Field(..., description="XOR-encrypted hex of student ID")
     forename: str
     surname: str
     passphrase: str
-    registered_at: float         # unix timestamp
+    registered_at: float = Field(..., description="Unix timestamp")
 
 
-@dataclass
-class Meeting:
+class Meeting(BaseModel):
     uuid: str
     finder_uuid: str
     target_uuid: str
     met_at: float
-    answers: str                 # JSON array: [{question, answer}, ...]
+    answers: str = Field(default="[]", description="JSON array of {question, answer}")
 
 
-@dataclass
-class Announcement:
+class Announcement(BaseModel):
     uuid: str
     message: str
     sent_at: float

@@ -1,0 +1,60 @@
+# Meet and Greet Server Configuration
+# Copy this file to app.toml and edit before each session.
+#
+# Start the server:   python -m server
+# Admin CLI:          python -m server admin --help
+
+# --------------------------------------------------------------------------
+# Network
+# --------------------------------------------------------------------------
+
+# HTTP API port. Must be unused on the LAN.
+port = 9876
+
+# UDP discovery port. Clients broadcast MAG_WHO here; server replies.
+udp_port = 9875
+
+# --------------------------------------------------------------------------
+# Security
+# --------------------------------------------------------------------------
+
+# 32-character hex string (= 16 bytes). Must match the MAG_XORKEY cmake
+# define used when compiling the client binary. Change this before each
+# semester so that last year's compiled binaries cannot register.
+encryption_key = "deadbeefcafebabedeadbeefcafebabe"
+
+# Bearer token required for all /admin/* endpoints. Change this!
+admin_token = "change-me-before-use"
+
+# --------------------------------------------------------------------------
+# Session
+# --------------------------------------------------------------------------
+
+# Session length in minutes. The countdown starts when the server starts.
+# Set to 0 to disable the automatic deadline (use `mag admin time N` instead).
+time_limit_minutes = 20
+
+# How many targets each student is assigned. Must be <= (num_students - 1).
+# If there are too few students the server falls back to a complete graph.
+targets_per_student = 5
+
+# --------------------------------------------------------------------------
+# Storage
+# --------------------------------------------------------------------------
+
+# SQLite database. Created automatically on first run.
+db_file = "mag.db"
+
+# JSON file used to persist target assignments across server restarts.
+targets_file = "targets.json"
+
+# Rotating log file (10 MB per file, 3 backups kept).
+log_file = "mag.log"
+
+# --------------------------------------------------------------------------
+# Behavior
+# --------------------------------------------------------------------------
+
+# Number of get-to-know-you questions shown per meeting.
+# At least one comes from the standard bank and one from the interesting bank.
+questions_per_meeting = 3

@@ -185,29 +185,12 @@ class DataStore:
 
 
 def _row_to_student(row: sqlite3.Row) -> Student:
-    return Student(
-        uuid=row["uuid"],
-        student_id_enc=row["student_id_enc"],
-        forename=row["forename"],
-        surname=row["surname"],
-        passphrase=row["passphrase"],
-        registered_at=row["registered_at"],
-    )
+    return Student.model_validate(dict(row))
 
 
 def _row_to_meeting(row: sqlite3.Row) -> Meeting:
-    return Meeting(
-        uuid=row["uuid"],
-        finder_uuid=row["finder_uuid"],
-        target_uuid=row["target_uuid"],
-        met_at=row["met_at"],
-        answers=row["answers"],
-    )
+    return Meeting.model_validate(dict(row))
 
 
 def _row_to_ann(row: sqlite3.Row) -> Announcement:
-    return Announcement(
-        uuid=row["uuid"],
-        message=row["message"],
-        sent_at=row["sent_at"],
-    )
+    return Announcement.model_validate(dict(row))

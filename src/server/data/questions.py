@@ -26,7 +26,7 @@ QUESTIONS_INTERESTING: list[str] = [
     "What is the most interesting place you have ever visited?",
     "If you could trade lives with someone for a day, who and why?",
     "What is a belief you hold that most people around you disagree with?",
-    "Describe the best meal you have ever eaten.",
+    "What is the best meal you have ever eaten?",
     "What is a problem you think your generation will have to solve that previous ones didn't?",
     "If money were no object, what career would you pursue?",
     "What is the strangest or most memorable dream you can remember?",
