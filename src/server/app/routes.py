@@ -31,14 +31,36 @@ def get_config(request: Request):
 
 # --- helpers ---
 
-def _pick_passphrase(store: DataStore) -> str:
-    used = store.used_passphrases()
-    available = [p for p in PASSPHRASES if p not in used]
-    if not available:
-        # cycle with suffix
-        idx = len(used) - len(PASSPHRASES)
-        return f"{PASSPHRASES[idx % len(PASSPHRASES)]}-{idx // len(PASSPHRASES) + 2}"
-    return random.choice(available)
+def _met_targets(meetings, student_uuid: str, target_uuids: set) -> set:
+    """Return the set of target UUIDs this student has met (either direction)."""
+    met = set()
+    for m in meetings:
+        if m.finder_uuid == student_uuid and m.target_uuid in target_uuids:
+            met.add(m.target_uuid)
+        elif m.target_uuid == student_uuid and m.finder_uuid in target_uuids:
+            met.add(m.finder_uuid)
+    return met
+
+
+def _filter_target_meetings(meetings, student_uuid: str, target_uuids: set) -> list:
+    """Return one meeting per met target (deduplicates bidirectional records)."""
+    met = _met_targets(meetings, student_uuid, target_uuids)
+    seen = set()
+    result = []
+    for m in meetings:
+        other = None
+        if m.finder_uuid == student_uuid and m.target_uuid in met:
+            other = m.target_uuid
+        elif m.target_uuid == student_uuid and m.finder_uuid in met:
+            other = m.finder_uuid
+        if other and other not in seen:
+            seen.add(other)
+            result.append(m)
+    return result
+
+
+def _count_target_meetings(meetings, student_uuid: str, target_uuids: set) -> int:
+    return len(_met_targets(meetings, student_uuid, target_uuids))
 
 
 def _pick_questions(n: int) -> list[str]:
@@ -102,20 +124,17 @@ def register(req: RegisterRequest, store: DataStore = Depends(get_store)):
             "name_differs": name_differs,
         }
 
-    passphrase = _pick_passphrase(store)
-    student = Student(
+    student = store.register_new_student(
         uuid=str(_uuid.uuid4()),
         student_id_enc=req.encrypted_id,
         forename=req.forename,
         surname=req.surname,
-        passphrase=passphrase,
-        registered_at=time.time(),
+        passphrase_pool=PASSPHRASES,
     )
-    store.add_student(student)
     _LOG.info("Registered %s %s (uuid=%s)", req.forename, req.surname, student.uuid)
     return {
         "uuid": student.uuid,
-        "passphrase": passphrase,
+        "passphrase": student.passphrase,
         "is_new": True,
     }
 
@@ -199,9 +218,6 @@ def answer(
     targets: dict = request.app.state.targets
     cfg = request.app.state.config
 
-    if store.meeting_exists(req.finder_uuid, req.target_uuid):
-        raise HTTPException(409, "Meeting already recorded")
-
     meeting = Meeting(
         uuid=str(_uuid.uuid4()),
         finder_uuid=req.finder_uuid,
@@ -209,10 +225,14 @@ def answer(
         met_at=time.time(),
         answers=json.dumps(req.answers),
     )
-    store.add_meeting(meeting)
+    inserted = store.add_meeting_if_not_exists(meeting)
+    if not inserted:
+        raise HTTPException(409, "Meeting already recorded")
 
-    completed = len(store.meetings_for_student(req.finder_uuid))
-    total = len(targets.get(req.finder_uuid, []))
+    my_targets = set(targets.get(req.finder_uuid, []))
+    all_meetings = store.meetings_for_student(req.finder_uuid)
+    completed = _count_target_meetings(all_meetings, req.finder_uuid, my_targets)
+    total = len(my_targets)
     _LOG.info("Meeting recorded: %s met %s (%d/%d)", req.finder_uuid, req.target_uuid, completed, total)
     return {"ok": True, "meetings_completed": completed, "total_targets": total}
 
@@ -226,19 +246,28 @@ def stats(
     targets: dict = request.app.state.targets
     cfg = request.app.state.config
 
-    meetings = store.meetings_for_student(student_uuid)
-    completed = len(meetings)
-    total = len(targets.get(student_uuid, []))
+    my_target_uuids = set(targets.get(student_uuid, []))
+    all_meetings = store.meetings_for_student(student_uuid)
+    relevant = _filter_target_meetings(all_meetings, student_uuid, my_target_uuids)
+    completed = len(relevant)
+    total = len(my_target_uuids)
 
-    finished_at = max((m.met_at for m in meetings), default=None) if completed == total and total > 0 else None
+    finished_at = max((m.met_at for m in relevant), default=None) if completed == total and total > 0 else None
 
     # compute finish place among those who completed all their targets
     place = None
     ordinal = None
     if finished_at is not None:
         all_finished = store.all_finished_students()
-        # filter to only students who have completed all their targets
-        full_finishers = [(u, t) for u, t in all_finished if len(targets.get(u, [])) == len(store.meetings_for_student(u))]
+        full_finishers = []
+        for u, last_met in all_finished:
+            u_targets = set(targets.get(u, []))
+            if not u_targets:
+                continue
+            u_meetings = store.meetings_for_student(u)
+            u_completed = _count_target_meetings(u_meetings, u, u_targets)
+            if u_completed == len(u_targets):
+                full_finishers.append((u, last_met))
         full_finishers.sort(key=lambda x: x[1])
         place = next((i + 1 for i, (u, _) in enumerate(full_finishers) if u == student_uuid), None)
         if place:
