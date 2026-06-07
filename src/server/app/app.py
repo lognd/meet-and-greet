@@ -38,12 +38,23 @@ class App:
 
     def _load_targets(self) -> dict[str, list[str]]:
         p = Path(self._cfg.targets_file)
-        if p.exists():
-            try:
-                return json.loads(p.read_text())
-            except Exception:
-                pass
-        return {}
+        if not p.exists():
+            return {}
+        try:
+            raw: dict[str, list[str]] = json.loads(p.read_text())
+        except Exception:
+            return {}
+        # Drop any UUID that no longer exists in the database so stale
+        # targets.json from a previous session cannot leak into a new one.
+        known = {s.uuid for s in self._store.get_all_students()}
+        validated = {
+            k: [v for v in vs if v in known]
+            for k, vs in raw.items()
+            if k in known
+        }
+        if validated != raw:
+            _LOG.warning("Dropped stale UUIDs from targets.json during load")
+        return validated
 
     def _on_startup(self) -> None:
         self._discovery.start()

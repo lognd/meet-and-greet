@@ -143,6 +143,14 @@ int main(int argc, char* argv[]) {
     auto targets = mag::tui::screen_wait(cli, student);
     LOG("targets_count", static_cast<int>(targets.size()));
 
+    // Empty targets means the user quit (Ctrl+C exits FTXUI loop without
+    // re-raising SIGINT) or targets were never assigned. Don't proceed to
+    // stats which would falsely show "you found all your targets".
+    if (targets.empty()) {
+        LOG("done: no targets, exiting");
+        return 0;
+    }
+
     LOG("phase", "hunt");
     mag::tui::screen_hunt(cli, student, targets);
 
