@@ -1,5 +1,6 @@
 import json
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
@@ -10,7 +11,6 @@ from server.app.routes import router as student_router
 from server.app.admin import router as admin_router
 from server.db import DataStore
 from server.discovery import UDPDiscovery
-from server.graph import assign_targets
 from server.logging import get_logger
 
 _LOG = get_logger(__name__)
@@ -23,15 +23,18 @@ class App:
         self._targets: dict[str, list[str]] = self._load_targets()
         self._discovery = UDPDiscovery(cfg.udp_port, cfg.port)
 
-        self._api = FastAPI(title="Meet and Greet", version="1.0.0")
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            self._on_startup()
+            yield
+            self._on_shutdown()
+
+        self._api = FastAPI(title="Meet and Greet", version="1.0.0", lifespan=lifespan)
         self._api.state.store = self._store
         self._api.state.targets = self._targets
         self._api.state.config = cfg
         self._api.include_router(student_router)
         self._api.include_router(admin_router)
-
-        self._api.add_event_handler("startup", self._on_startup)
-        self._api.add_event_handler("shutdown", self._on_shutdown)
 
     def _load_targets(self) -> dict[str, list[str]]:
         p = Path(self._cfg.targets_file)
