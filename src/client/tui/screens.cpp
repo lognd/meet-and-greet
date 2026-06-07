@@ -1,4 +1,5 @@
 #include "tui.h"
+#include "log.h"
 #include "network.h"
 #include "data.h"
 
@@ -91,6 +92,7 @@ static Component with_announcements(
 namespace mag::tui {
 
 ServerInfo screen_discover(int udp_port) {
+    LOG("screen_discover: start");
     auto screen = ScreenInteractive::Fullscreen();
 
     ServerInfo result;
@@ -137,6 +139,7 @@ ServerInfo screen_discover(int udp_port) {
         return false;
     });
 
+    LOG("screen_discover: server found");
     screen.Loop(component);
     return result;
 }
@@ -146,11 +149,13 @@ ServerInfo screen_discover(int udp_port) {
 // ---------------------------------------------------------------------------
 
 Student screen_register(HttpClient& cli) {
+    LOG("screen_register: start");
     std::optional<Student> result;
 
     // --- Registration form ---
     {
         auto screen = ScreenInteractive::Fullscreen();
+        LOG("screen_register: registration form opened");
         std::string id_str, forename, surname, error_msg;
         bool submitting = false;
 
@@ -159,6 +164,7 @@ Student screen_register(HttpClient& cli) {
         auto sn_input  = Input(&surname,  "e.g.  Smith");
 
         auto do_submit = [&]() {
+            LOG("screen_register: submit pressed");
             error_msg.clear();
             if (id_str.empty() || forename.empty() || surname.empty()) {
                 error_msg = "All fields are required."; return;
@@ -166,10 +172,15 @@ Student screen_register(HttpClient& cli) {
             uint64_t sid = 0;
             try { sid = std::stoull(id_str); }
             catch (...) { error_msg = "Student ID must be a number."; return; }
+            LOG("screen_register: calling register_student");
             submitting = true;
             auto r = cli.register_student(encrypt_id(sid), forename, surname);
             submitting = false;
-            if (!r) { error_msg = "Network error - is the server running?"; return; }
+            if (!r) {
+                LOG("screen_register: register_student returned nullopt");
+                error_msg = "Network error - is the server running?"; return;
+            }
+            LOG("screen_register: register_student ok, is_new", r->is_new);
             result = r;
             screen.ExitLoopClosure()();
         };
@@ -200,6 +211,9 @@ Student screen_register(HttpClient& cli) {
                 text(" Tab between fields  |  Enter to submit") | color(Color::GrayDark) | hcenter);
             return vbox(rows) | border;
         }));
+
+        LOG("screen_register: registration form loop done");
+        LOG("screen_register: result has value", result.has_value());
 
         // If reconnect with name mismatch, offer to update
         if (result && !result->is_new) {
@@ -232,8 +246,16 @@ Student screen_register(HttpClient& cli) {
 
     // --- Passphrase display ---
     {
+        LOG("screen_register: entering passphrase display");
+        LOG("screen_register: result.has_value", result.has_value());
+        if (result) {
+            LOG("screen_register: passphrase", result->passphrase);
+            LOG("screen_register: forename",   result->forename);
+        }
         auto ps = ScreenInteractive::Fullscreen();
+        LOG("screen_register: passphrase ScreenInteractive created");
         auto cont = Button("  I have it - Continue  ", [&] { ps.ExitLoopClosure()(); });
+        LOG("screen_register: starting passphrase loop");
         ps.Loop(Renderer(cont, [&] {
             return vbox({
                 header("YOUR SECRET PASSPHRASE"),
@@ -253,8 +275,10 @@ Student screen_register(HttpClient& cli) {
                 cont->Render() | hcenter,
             }) | border;
         }));
+        LOG("screen_register: passphrase loop done");
     }
 
+    LOG("screen_register: returning student");
     return *result;
 }
 

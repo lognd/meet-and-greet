@@ -1,4 +1,5 @@
 #include "data.h"
+#include "log.h"
 #include "network.h"
 #include "tui.h"
 
@@ -111,30 +112,43 @@ static int run_headless(const Args& args) {
 
 int main(int argc, char* argv[]) {
     enable_ansi();
+    mag::log::init();
+    LOG("startup");
+
     Args args = parse_args(argc, argv);
+    LOG("headless", args.headless);
+    LOG("master",   args.master);
 
     if (args.headless) return run_headless(args);
 
-    // Phase 1: discover server via UDP broadcast
+    LOG("phase", "discover");
     mag::ServerInfo server = mag::tui::screen_discover(MAG_UDP_PORT);
+    LOG("server_ip",   server.ip);
+    LOG("server_port", server.port);
     mag::HttpClient cli{server.ip, server.port};
 
     if (args.master) {
+        LOG("phase", "master");
         mag::tui::screen_master(cli);
         return 0;
     }
 
-    // Phase 2: register (or reconnect)
+    LOG("phase", "register");
     mag::Student student = mag::tui::screen_register(cli);
+    LOG("uuid",       student.uuid);
+    LOG("passphrase", student.passphrase);
+    LOG("is_new",     student.is_new);
 
-    // Phase 3: wait for targets to be assigned
+    LOG("phase", "wait");
     auto targets = mag::tui::screen_wait(cli, student);
+    LOG("targets_count", static_cast<int>(targets.size()));
 
-    // Phase 4: hunt and meet all targets
+    LOG("phase", "hunt");
     mag::tui::screen_hunt(cli, student, targets);
 
-    // Phase 5: stats
+    LOG("phase", "stats");
     mag::tui::screen_stats(cli, student);
 
+    LOG("done");
     return 0;
 }
