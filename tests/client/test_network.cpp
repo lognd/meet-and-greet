@@ -6,9 +6,7 @@
 #include "network.h"
 #include "data.h"
 
-#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
-#define CPPHTTPLIB_OPENSSL_SUPPORT 0
-#endif
+#undef CPPHTTPLIB_OPENSSL_SUPPORT  // plain HTTP only; #define X 0 still satisfies #ifdef X
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <thread>

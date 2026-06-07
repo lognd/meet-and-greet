@@ -503,32 +503,61 @@ All require `Authorization: Bearer <admin_token>`.
 
 ## Cross-platform release builds
 
-`make release` produces ready-to-distribute binaries for all common targets.
-It uses Docker + a MinGW cross-compiler for Windows and a sysroot for macOS.
+`make release` cross-compiles all supported targets from a single Linux arm64
+host (e.g. Snapdragon X Elite / WSL2).
+
+### One-time toolchain setup
 
 ```bash
-make release                       # builds all three platforms
-make release-linux                 # Linux x86-64 only
-make release-windows               # Windows x86-64 only (cross-compiled with MinGW)
-make release-macos                 # macOS universal binary (arm64 + x86-64, requires macOS host)
+sudo scripts/setup-cross.sh
 ```
 
-Binaries are placed in `dist/`:
+This installs:
+
+| What | How |
+|------|-----|
+| `g++-x86-64-linux-gnu` | apt — Linux x86-64 cross-compiler |
+| `g++-mingw-w64-x86-64-posix` | apt — Windows x86-64 (MinGW-w64) |
+| llvm-mingw | downloaded from GitHub — Windows arm64 |
+
+### Build
+
+```bash
+make release                       # all four platforms
+make release-linux-arm64           # Linux arm64 (native, no toolchain needed)
+make release-linux-x86_64          # Linux x86-64
+make release-windows-x86_64        # Windows x86-64
+make release-windows-arm64         # Windows arm64
+make release-macos                 # macOS universal (macOS host only)
+```
+
+Binaries land in `dist/`:
 
 ```
 dist/
+  mag_client-linux-arm64
   mag_client-linux-x86_64
   mag_client-windows-x86_64.exe
-  mag_client-macos-universal
+  mag_client-windows-arm64.exe
+  mag_client-macos-universal        (macOS host only)
 ```
 
-### Requirements
+Windows binaries are statically linked (no DLL runtime required).
 
-| Target | Host requirement |
-|--------|-----------------|
-| Linux x86-64 | Any Linux x86-64 host with Docker |
-| Windows x86-64 | Any Linux x86-64 host with Docker + MinGW (`mingw-w64`) |
-| macOS universal | macOS host with Xcode Command Line Tools and CMake |
+### Toolchain files
+
+| File | Target |
+|------|--------|
+| `cmake/toolchain-linux-x86_64.cmake` | Linux x86-64 via `x86_64-linux-gnu-g++` |
+| `cmake/toolchain-windows-x86_64.cmake` | Windows x86-64 via MinGW-w64 posix |
+| `cmake/toolchain-windows-arm64.cmake` | Windows arm64 via llvm-mingw clang++ |
+
+The llvm-mingw root defaults to `/opt/llvm-mingw` (where `setup-cross.sh`
+puts it). Override with `LLVM_MINGW_ROOT`:
+
+```bash
+make release-windows-arm64 LLVM_MINGW_ROOT=/usr/local/llvm-mingw
+```
 
 ### Changing the encryption key for distribution
 
@@ -781,8 +810,11 @@ Override the log file path in `app.toml` (`log_file` key).
 1. Update the version in `pyproject.toml`.
 2. Decide on a new `encryption_key` (see [Choosing encryption_key](#choosing-encryption_key)).
 3. Update `app.toml.example` with the new key.
-4. `make release XORKEY="<new-key>"` — produces all three platform binaries.
-5. Commit, tag, distribute `dist/` to students.
+4. Run the cross-compiler setup if not already done: `sudo scripts/setup-cross.sh`
+5. `make release XORKEY="<new-key>"` — produces four platform binaries in `dist/`.
+6. For macOS, run `make release-macos XORKEY="<new-key>"` on a macOS host and
+   add `dist/mag_client-macos-universal` to the release.
+7. Commit, tag, distribute `dist/` to students.
 
 ---
 

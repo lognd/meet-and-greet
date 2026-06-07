@@ -19,9 +19,26 @@ set(MAG_UDP_PORT  9875 CACHE STRING "UDP discovery port")
 
 include(FetchContent)
 
+# httplib: header-only HTTP library.
+# We use FetchContent_Populate (not MakeAvailable) to download the source
+# without running httplib's own CMakeLists.txt.  That cmake runs
+# find_package(OpenSSL) and, if it succeeds, propagates
+# -DCPPHTTPLIB_OPENSSL_SUPPORT and -lssl/-lcrypto to every consumer.
+# Cross-sysroots never carry the host arch's OpenSSL headers, causing build
+# failures.  Since httplib is header-only, all we need is the include path.
 FetchContent_Declare(httplib
     GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
     GIT_TAG        v0.18.7)
+
+FetchContent_GetProperties(httplib)
+if(NOT httplib_POPULATED)
+    FetchContent_Populate(httplib)
+endif()
+
+# Plain interface target - include path only, no OpenSSL.
+add_library(httplib_iface INTERFACE)
+target_include_directories(httplib_iface INTERFACE ${httplib_SOURCE_DIR})
+add_library(httplib::httplib ALIAS httplib_iface)
 
 FetchContent_Declare(nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -40,7 +57,7 @@ FetchContent_Declare(Catch2
     GIT_SHALLOW    TRUE)
 
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON)  # don't re-fetch on every build
-FetchContent_MakeAvailable(httplib nlohmann_json ftxui Catch2)
+FetchContent_MakeAvailable(nlohmann_json ftxui Catch2)
 
 # --------------------------------------------------------------------------
 # Platform libs

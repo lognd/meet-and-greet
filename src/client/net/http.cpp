@@ -1,9 +1,5 @@
 #include "network.h"
 
-// cpp-httplib is header-only; including it here keeps compile times fast.
-#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
-#define CPPHTTPLIB_OPENSSL_SUPPORT 0
-#endif
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 

@@ -1,6 +1,7 @@
 # Build artifacts
 cmake-build-*/
 build/
+build-release-*/
 *.o
 *.a
 *.so
