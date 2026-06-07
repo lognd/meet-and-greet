@@ -46,7 +46,7 @@ class App:
             return {}
         # Drop any UUID that no longer exists in the database so stale
         # targets.json from a previous session cannot leak into a new one.
-        known = {s.uuid for s in self._store.get_all_students()}
+        known = {s.uuid for s in self._store.all_students()}
         validated = {
             k: [v for v in vs if v in known]
             for k, vs in raw.items()

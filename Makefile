@@ -57,6 +57,14 @@ build:
 		-DFETCHCONTENT_QUIET=OFF
 	cmake --build $(BUILD_DIR) -j$(WORKERS)
 
+# ── Server ────────────────────────────────────────────────────────────────────
+
+.PHONY: serve
+serve:
+	@echo "Removing stale session state (mag.db, targets.json)..."
+	rm -f mag.db targets.json
+	PYTHONPATH=src $(PYTHON) -m server
+
 # ── Test targets ──────────────────────────────────────────────────────────────
 
 .PHONY: test
