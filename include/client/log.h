@@ -4,6 +4,21 @@
 #include <string>
 #include <chrono>
 #include <ctime>
+#include <sstream>
+
+#ifdef _WIN32
+#  include <process.h>
+#  define MAG_GETPID() static_cast<int>(_getpid())
+#  define MAG_PLATFORM "windows"
+#elif defined(__APPLE__)
+#  include <unistd.h>
+#  define MAG_GETPID() static_cast<int>(getpid())
+#  define MAG_PLATFORM "macos"
+#else
+#  include <unistd.h>
+#  define MAG_GETPID() static_cast<int>(getpid())
+#  define MAG_PLATFORM "linux"
+#endif
 
 // Single-file logger that writes to mag_client.log in the working directory.
 // FTXUI owns the terminal, so stdout/stderr are invisible during TUI operation.
@@ -24,9 +39,14 @@ inline std::mutex& mtx() {
 
 inline void init(const std::string& path = "mag_client.log") {
     stream().open(path, std::ios::app);
-    // separator so repeated runs are distinguishable in the log
+    std::time_t t = std::time(nullptr);
+    char tbuf[32];
+    std::strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", std::localtime(&t));
     std::lock_guard<std::mutex> lk(mtx());
-    stream() << "\n=== session start ===\n";
+    stream() << "\n=== session start  " << tbuf
+             << "  pid=" << MAG_GETPID()
+             << "  platform=" MAG_PLATFORM
+             << " ===\n";
     stream().flush();
 }
 
@@ -37,7 +57,7 @@ inline void write(const std::string& msg) {
     char buf[20];
     std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&t));
     std::lock_guard<std::mutex> lk(mtx());
-    stream() << "[" << buf << "] " << msg << "\n";
+    stream() << "[" << buf << " pid=" << MAG_GETPID() << "] " << msg << "\n";
     stream().flush();
 }
 

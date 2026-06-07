@@ -40,30 +40,20 @@ struct AnnState {
     std::string message;
     double      last_since{0.0};
     bool        show_modal{false};  // read/written under mtx, also the bool* Modal needs
+    bool        stop{false};        // set before joining the poll thread
 };
 
 // Wraps `inner` with a modal overlay that appears when announcements arrive.
-// A detached background thread polls; caller must ensure cli outlives the screen.
-static Component with_announcements(
+// Starts and returns the poll thread. Caller must set ann.stop=true then join
+// the returned thread before destroying `screen`; otherwise the thread calls
+// PostEvent on a dead object and corrupts the next screen's terminal state.
+static std::thread with_announcements(
     Component inner,
+    Component& out_component,
     mag::HttpClient& cli,
     AnnState& ann,
     ScreenInteractive& screen)
 {
-    std::thread([&]() {
-        while (true) {
-            std::this_thread::sleep_for(5s);
-            auto anns = cli.get_announcements(ann.last_since);
-            for (const auto& a : anns) {
-                std::lock_guard<std::mutex> lk(ann.mtx);
-                ann.message    = a.message;
-                ann.last_since = a.sent_at;
-                ann.show_modal = true;
-                screen.PostEvent(Event::Custom);
-            }
-        }
-    }).detach();
-
     auto dismiss_btn = Button("  Dismiss  ", [&] {
         std::lock_guard<std::mutex> lk(ann.mtx);
         ann.show_modal = false;
@@ -82,7 +72,26 @@ static Component with_announcements(
         }) | border | color(Color::Red);
     });
 
-    return Modal(inner, modal_renderer, &ann.show_modal);
+    out_component = Modal(inner, modal_renderer, &ann.show_modal);
+
+    return std::thread([&]() {
+        while (true) {
+            // Sleep in short slices so ann.stop is checked promptly.
+            for (int i = 0; i < 10; ++i) {
+                std::this_thread::sleep_for(500ms);
+                { std::lock_guard<std::mutex> lk(ann.mtx); if (ann.stop) return; }
+            }
+            auto anns = cli.get_announcements(ann.last_since);
+            for (const auto& a : anns) {
+                std::lock_guard<std::mutex> lk(ann.mtx);
+                if (ann.stop) return;
+                ann.message    = a.message;
+                ann.last_since = a.sent_at;
+                ann.show_modal = true;
+                screen.PostEvent(Event::Custom);
+            }
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -99,24 +108,28 @@ ServerInfo screen_discover(int udp_port) {
     std::atomic<bool> found{false};
     std::atomic<int>  ticks{0};
 
-    std::thread([&]() {
+    // Threads must be joined before `screen` is destroyed, otherwise a
+    // thread that wakes after the loop exits calls PostEvent on a dead object,
+    // corrupting the terminal state for the next ScreenInteractive.
+    std::thread discover_thrd([&]() {
         while (!found.load()) {
-            auto info = discover_server(udp_port, 3);
-            if (info) {
+            auto info = discover_server(udp_port, 1);  // 1-second poll
+            if (info && !found.load()) {
                 result = *info;
                 found  = true;
                 screen.PostEvent(Event::Custom);
             }
         }
-    }).detach();
+    });
 
-    std::thread([&]() {
+    std::thread ticker_thrd([&]() {
         while (!found.load()) {
             std::this_thread::sleep_for(200ms);
+            if (found.load()) break;  // re-check so we never PostEvent after exit
             ++ticks;
             screen.PostEvent(Event::Custom);
         }
-    }).detach();
+    });
 
     const std::string spinner_chars = "|/-\\";
     auto renderer = Renderer([&] {
@@ -141,6 +154,11 @@ ServerInfo screen_discover(int udp_port) {
 
     LOG("screen_discover: server found");
     screen.Loop(component);
+
+    // found is true here; threads will exit their loops within one tick.
+    discover_thrd.join();
+    ticker_thrd.join();
+    LOG("screen_discover: threads joined");
     return result;
 }
 
@@ -172,23 +190,27 @@ Student screen_register(HttpClient& cli) {
             uint64_t sid = 0;
             try { sid = std::stoull(id_str); }
             catch (...) { error_msg = "Student ID must be a number."; return; }
-            LOG("screen_register: calling register_student");
+            LOG("screen_register: launching register thread");
             submitting = true;
-            auto r = cli.register_student(encrypt_id(sid), forename, surname);
-            submitting = false;
-            if (!r) {
-                LOG("screen_register: register_student returned nullopt");
-                error_msg = "Network error - is the server running?"; return;
-            }
-            LOG("screen_register: register_student ok, is_new", r->is_new);
-            result = r;
-            screen.ExitLoopClosure()();
+            // Network call on a background thread so the event loop stays responsive.
+            std::thread([&, sid]() {
+                auto r = cli.register_student(encrypt_id(sid), forename, surname);
+                submitting = false;
+                if (!r) {
+                    LOG("screen_register: register_student returned nullopt");
+                    error_msg = "Network error - is the server running?";
+                } else {
+                    LOG("screen_register: register_student ok, is_new", r->is_new);
+                    result = r;
+                }
+                screen.PostEvent(Event::Custom);
+            }).detach();
         };
 
         auto submit_btn = Button("  Register  ", do_submit);
         auto inputs = Container::Vertical({id_input, fn_input, sn_input, submit_btn});
 
-        screen.Loop(Renderer(inputs, [&] {
+        auto form = CatchEvent(Renderer(inputs, [&] {
             Elements rows = {
                 header("REGISTRATION"),
                 text(""),
@@ -210,7 +232,11 @@ Student screen_register(HttpClient& cli) {
             rows.push_back(
                 text(" Tab between fields  |  Enter to submit") | color(Color::GrayDark) | hcenter);
             return vbox(rows) | border;
-        }));
+        }), [&](Event) {
+            if (result) { screen.ExitLoopClosure()(); }
+            return false;
+        });
+        screen.Loop(form);
 
         LOG("screen_register: registration form loop done");
         LOG("screen_register: result has value", result.has_value());
@@ -294,10 +320,10 @@ std::vector<Target> screen_wait(HttpClient& cli, const Student& student) {
     std::string         time_label = "Waiting for session to start...";
     std::mutex          label_mtx;
 
-    std::thread([&]() {
+    std::thread poll_thrd([&]() {
         while (!found.load()) {
             auto targets = cli.get_targets(student.uuid);
-            if (!targets.empty()) {
+            if (!targets.empty() && !found.load()) {
                 result = targets;
                 found  = true;
                 screen.PostEvent(Event::Custom);
@@ -312,18 +338,21 @@ std::vector<Target> screen_wait(HttpClient& cli, const Student& student) {
                 time_label = lbl;
             }
             screen.PostEvent(Event::Custom);
-            std::this_thread::sleep_for(5s);
+            // Sleep in short slices so found is checked promptly after exit.
+            for (int i = 0; i < 10 && !found.load(); ++i)
+                std::this_thread::sleep_for(500ms);
         }
-    }).detach();
+    });
 
     std::atomic<int> ticks{0};
-    std::thread([&]() {
+    std::thread ticker_thrd([&]() {
         while (!found.load()) {
             std::this_thread::sleep_for(250ms);
+            if (found.load()) break;
             ++ticks;
             screen.PostEvent(Event::Custom);
         }
-    }).detach();
+    });
 
     const std::string spinner_chars = "|/-\\";
     AnnState ann;
@@ -348,7 +377,8 @@ std::vector<Target> screen_wait(HttpClient& cli, const Student& student) {
         }) | border;
     });
 
-    auto with_ann = with_announcements(inner, cli, ann, screen);
+    Component with_ann;
+    auto ann_thrd = with_announcements(inner, with_ann, cli, ann, screen);
 
     auto component = CatchEvent(with_ann, [&](Event) {
         if (found.load()) { screen.ExitLoopClosure()(); }
@@ -356,6 +386,13 @@ std::vector<Target> screen_wait(HttpClient& cli, const Student& student) {
     });
 
     screen.Loop(component);
+
+    // Stop all background threads before `screen` is destroyed.
+    found = true;  // ensures poll/ticker loops exit
+    { std::lock_guard<std::mutex> lk(ann.mtx); ann.stop = true; }
+    poll_thrd.join();
+    ticker_thrd.join();
+    ann_thrd.join();
     return result;
 }
 
@@ -479,8 +516,9 @@ void screen_hunt(HttpClient& cli, const Student& student,
 
         std::string time_label;
         std::mutex  tl_mtx;
+        std::atomic<bool> tp_stop{false};
         std::thread time_poller([&]() {
-            while (true) {
+            while (!tp_stop.load()) {
                 auto tinfo = cli.get_time();
                 if (tinfo && tinfo->remaining >= 0) {
                     int s = static_cast<int>(tinfo->remaining);
@@ -488,12 +526,12 @@ void screen_hunt(HttpClient& cli, const Student& student,
                                     + std::to_string(s % 60) + "s remaining";
                     std::lock_guard<std::mutex> lk(tl_mtx);
                     time_label = lbl;
-                    screen.PostEvent(Event::Custom);
+                    if (!tp_stop.load()) screen.PostEvent(Event::Custom);
                 }
-                std::this_thread::sleep_for(10s);
+                for (int i = 0; i < 20 && !tp_stop.load(); ++i)
+                    std::this_thread::sleep_for(500ms);
             }
         });
-        time_poller.detach();
 
         auto inner = Renderer(c, [&] {
             std::string tl;
@@ -525,7 +563,14 @@ void screen_hunt(HttpClient& cli, const Student& student,
             }) | border;
         });
 
-        screen.Loop(with_announcements(inner, cli, ann, screen));
+        Component hunt_component;
+        auto ann_thrd = with_announcements(inner, hunt_component, cli, ann, screen);
+        screen.Loop(hunt_component);
+
+        tp_stop = true;
+        time_poller.join();
+        { std::lock_guard<std::mutex> lk(ann.mtx); ann.stop = true; }
+        ann_thrd.join();
 
         if (show_mypass) {
             auto ps = ScreenInteractive::Fullscreen();

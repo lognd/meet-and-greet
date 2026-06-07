@@ -30,6 +30,16 @@ json parse(const httplib::Result& res) {
     }
 }
 
+// Safe accessor: returns default when key is missing OR when value is null.
+// nlohmann's j.value(key, def) only falls back for missing keys; it throws
+// type_error.302 when the key exists but the value is JSON null.
+template<typename T>
+T jget(const json& j, const std::string& key, T def) {
+    auto it = j.find(key);
+    if (it == j.end() || it->is_null()) return def;
+    return it->get<T>();
+}
+
 } // namespace
 
 std::optional<Student> HttpClient::register_student(
@@ -48,11 +58,11 @@ std::optional<Student> HttpClient::register_student(
     if (j.is_null()) return std::nullopt;
 
     Student s;
-    s.uuid        = j.value("uuid", "");
-    s.passphrase  = j.value("passphrase", "");
-    s.is_new      = j.value("is_new", true);
-    s.forename    = j.value("forename", forename);
-    s.surname     = j.value("surname", surname);
+    s.uuid        = jget<std::string>(j, "uuid", "");
+    s.passphrase  = jget<std::string>(j, "passphrase", "");
+    s.is_new      = jget<bool>(j, "is_new", true);
+    s.forename    = jget<std::string>(j, "forename", forename);
+    s.surname     = jget<std::string>(j, "surname", surname);
     return s;
 }
 
@@ -65,22 +75,22 @@ bool HttpClient::update_name(
     json body = {{"forename", forename}, {"surname", surname}};
     auto res = cli.Put("/student/" + uuid, body.dump(), "application/json");
     json j = parse(res);
-    return j.value("ok", false);
+    return jget<bool>(j, "ok", false);
 }
 
 std::vector<Target> HttpClient::get_targets(const std::string& uuid) {
     auto cli = make_client(host, port);
     auto res = cli.Get("/targets/" + uuid);
     json j = parse(res);
-    if (j.is_null() || !j.contains("targets")) return {};
+    if (j.is_null() || !j.contains("targets") || !j["targets"].is_array()) return {};
 
     std::vector<Target> targets;
     for (const auto& t : j["targets"]) {
         targets.push_back({
-            t.value("uuid", ""),
-            t.value("forename", ""),
-            t.value("surname", ""),
-            t.value("passphrase_hint", ""),
+            jget<std::string>(t, "uuid", ""),
+            jget<std::string>(t, "forename", ""),
+            jget<std::string>(t, "surname", ""),
+            jget<std::string>(t, "passphrase_hint", ""),
         });
     }
     return targets;
@@ -98,15 +108,17 @@ std::vector<std::string> HttpClient::meet(
     auto res = cli.Post("/meet", body.dump(), "application/json");
     json j = parse(res);
     if (j.is_null()) { error_msg = "Network error"; return {}; }
-    if (!j.value("ok", false)) {
-        error_msg = j.value("reason", "unknown error");
+    if (!jget<bool>(j, "ok", false)) {
+        error_msg = jget<std::string>(j, "reason", "unknown error");
         return {};
     }
-    out_target_uuid     = j.value("target_uuid", "");
-    out_target_forename = j.value("target_forename", "");
+    out_target_uuid     = jget<std::string>(j, "target_uuid", "");
+    out_target_forename = jget<std::string>(j, "target_forename", "");
     std::vector<std::string> questions;
-    for (const auto& q : j.value("questions", json::array()))
-        questions.push_back(q.get<std::string>());
+    auto qs = j.contains("questions") && j["questions"].is_array()
+                  ? j["questions"] : json::array();
+    for (const auto& q : qs)
+        if (q.is_string()) questions.push_back(q.get<std::string>());
     return questions;
 }
 
@@ -130,9 +142,9 @@ bool HttpClient::submit_answers(
     auto res = cli.Post("/answer", body.dump(), "application/json");
     json j = parse(res);
     if (j.is_null()) return false;
-    out_completed = j.value("meetings_completed", 0);
-    out_total     = j.value("total_targets", 0);
-    return j.value("ok", false);
+    out_completed = jget<int>(j, "meetings_completed", 0);
+    out_total     = jget<int>(j, "total_targets", 0);
+    return jget<bool>(j, "ok", false);
 }
 
 std::optional<HttpClient::Stats> HttpClient::get_stats(const std::string& uuid) {
@@ -141,10 +153,10 @@ std::optional<HttpClient::Stats> HttpClient::get_stats(const std::string& uuid) 
     json j = parse(res);
     if (j.is_null()) return std::nullopt;
     Stats s;
-    s.completed = j.value("meetings_completed", 0);
-    s.total     = j.value("total_targets", 0);
-    s.place     = j.value("finish_place", 0);
-    s.ordinal   = j.value("finish_ordinal", "");
+    s.completed = jget<int>(j, "meetings_completed", 0);
+    s.total     = jget<int>(j, "total_targets", 0);
+    s.place     = jget<int>(j, "finish_place", 0);      // null when not yet finished
+    s.ordinal   = jget<std::string>(j, "finish_ordinal", "");
     return s;
 }
 
@@ -154,9 +166,9 @@ std::optional<HttpClient::TimeInfo> HttpClient::get_time() {
     json j = parse(res);
     if (j.is_null()) return std::nullopt;
     TimeInfo t;
-    t.server_time = j.value("server_time", 0.0);
-    t.deadline    = j.value("deadline", 0.0);
-    t.remaining   = j.value("remaining_seconds", -1.0);
+    t.server_time = jget<double>(j, "server_time", 0.0);
+    t.deadline    = jget<double>(j, "deadline", 0.0);
+    t.remaining   = jget<double>(j, "remaining_seconds", -1.0);
     return t;
 }
 
@@ -164,13 +176,13 @@ std::vector<HttpClient::Announcement> HttpClient::get_announcements(double since
     auto cli = make_client(host, port);
     auto res = cli.Get("/announcements?since=" + std::to_string(since));
     json j = parse(res);
-    if (j.is_null() || !j.contains("announcements")) return {};
+    if (j.is_null() || !j.contains("announcements") || !j["announcements"].is_array()) return {};
     std::vector<Announcement> out;
     for (const auto& a : j["announcements"]) {
         out.push_back({
-            a.value("uuid", ""),
-            a.value("message", ""),
-            a.value("sent_at", 0.0),
+            jget<std::string>(a, "uuid", ""),
+            jget<std::string>(a, "message", ""),
+            jget<double>(a, "sent_at", 0.0),
         });
     }
     return out;
