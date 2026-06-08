@@ -191,4 +191,20 @@ std::vector<HttpClient::Announcement> HttpClient::get_announcements(double since
     return out;
 }
 
+std::optional<HttpClient::PendingMeet> HttpClient::get_pending_meet(
+    const std::string& uuid)
+{
+    auto cli = make_client(host, port);
+    auto res = cli.Get("/pending_meet/" + uuid);
+    json j = parse(res);
+    if (j.is_null() || !jget<bool>(j, "pending", false)) return std::nullopt;
+    PendingMeet pm;
+    pm.finder_uuid     = jget<std::string>(j, "finder_uuid", "");
+    pm.finder_forename = jget<std::string>(j, "finder_forename", "");
+    if (j.contains("questions") && j["questions"].is_array())
+        for (const auto& q : j["questions"])
+            if (q.is_string()) pm.questions.push_back(q.get<std::string>());
+    return pm;
+}
+
 } // namespace mag

@@ -1,12 +1,12 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "meet-and-greet-server"
 version = "1.0.0"
 description = "MAG classroom icebreaker server"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.111",
     "uvicorn[standard]>=0.29",

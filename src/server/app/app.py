@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -33,6 +34,8 @@ class App:
         self._api.state.store = self._store
         self._api.state.targets = self._targets
         self._api.state.config = cfg
+        self._api.state.pending_meets = {}
+        self._api.state.pending_meets_lock = threading.Lock()
         self._api.include_router(student_router)
         self._api.include_router(admin_router)
 

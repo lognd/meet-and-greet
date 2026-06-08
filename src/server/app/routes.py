@@ -201,6 +201,17 @@ def meet(
 
     questions = _pick_questions(cfg.questions_per_meeting)
     _LOG.info("%s meeting %s", req.finder_uuid, target.uuid)
+
+    # Notify the target that someone found them so they can auto-navigate.
+    lock = request.app.state.pending_meets_lock
+    pending = request.app.state.pending_meets
+    with lock:
+        pending[target.uuid] = {
+            "finder_uuid": req.finder_uuid,
+            "finder_forename": finder.forename,
+            "questions": questions,
+        }
+
     return {
         "ok": True,
         "target_uuid": target.uuid,
@@ -282,6 +293,18 @@ def stats(
         "finish_ordinal": ordinal,
         "finished_at": finished_at,
     }
+
+
+@router.get("/pending_meet/{student_uuid}")
+def pending_meet(student_uuid: str, request: Request):
+    """Poll by the target to detect when someone has entered their passphrase."""
+    lock = request.app.state.pending_meets_lock
+    meets = request.app.state.pending_meets
+    with lock:
+        pm = meets.pop(student_uuid, None)
+    if pm is None:
+        return {"pending": False}
+    return {"pending": True, **pm}
 
 
 @router.get("/time")

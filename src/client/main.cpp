@@ -123,42 +123,27 @@ int main(int argc, char* argv[]) {
 
     if (args.headless) return run_headless(args);
 
-    // One ScreenInteractive for the whole session. Re-entering raw mode
-    // between screens causes a visible terminal flash; sharing it avoids that.
-    auto screen = ftxui::ScreenInteractive::Fullscreen();
-
-    LOG("phase", "discover");
-    mag::ServerInfo server = mag::tui::screen_discover(screen, MAG_UDP_PORT);
-    LOG("server_ip",   server.ip);
-    LOG("server_port", server.port);
-    mag::HttpClient cli{server.ip, server.port};
-
     if (args.master) {
+        // Master mode discovers the server, then runs its own TUI.
+        LOG("phase", "discover_headless");
+        auto server = mag::discover_server(MAG_UDP_PORT, 30);
+        if (!server) {
+            std::cerr << "ERROR: server not found\n";
+            return 1;
+        }
+        LOG("server_ip",   server->ip);
+        LOG("server_port", server->port);
+        mag::HttpClient cli{server->ip, server->port};
         LOG("phase", "master");
         mag::tui::screen_master(cli);
         return 0;
     }
 
-    LOG("phase", "register");
-    mag::Student student = mag::tui::screen_register(screen, cli);
-    LOG("uuid",       student.uuid);
-    LOG("passphrase", student.passphrase);
-    LOG("is_new",     student.is_new);
-
-    LOG("phase", "wait");
-    auto targets = mag::tui::screen_wait(screen, cli, student);
-    LOG("targets_count", static_cast<int>(targets.size()));
-
-    if (targets.empty()) {
-        LOG("done: no targets, exiting");
-        return 0;
-    }
-
-    LOG("phase", "hunt");
-    mag::tui::screen_hunt(screen, cli, student, targets);
-
-    LOG("phase", "stats");
-    mag::tui::screen_stats(screen, cli, student);
+    // Student mode: one ScreenInteractive for the whole session.
+    // run_tui uses a single screen.Loop() with a swappable router component
+    // so the terminal alternate-screen buffer is never toggled between screens.
+    auto screen = ftxui::ScreenInteractive::Fullscreen();
+    mag::tui::run_tui(screen, MAG_UDP_PORT);
 
     LOG("done");
     return 0;

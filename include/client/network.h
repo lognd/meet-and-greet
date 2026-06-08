@@ -75,6 +75,16 @@ struct HttpClient {
         double sent_at{0};
     };
     std::vector<Announcement> get_announcements(double since);
+
+    // Returns a pending meeting initiated by another student entering our
+    // passphrase.  The server pops and returns at most one entry per call,
+    // so the client should poll periodically.  Returns empty when none.
+    struct PendingMeet {
+        std::string              finder_uuid;
+        std::string              finder_forename;
+        std::vector<std::string> questions;
+    };
+    std::optional<PendingMeet> get_pending_meet(const std::string& uuid);
 };
 
 } // namespace mag
