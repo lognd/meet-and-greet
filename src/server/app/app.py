@@ -20,6 +20,7 @@ _LOG = get_logger(__name__)
 class App:
     def __init__(self, cfg: AppConfig) -> None:
         self._cfg = cfg
+        self._reset_session()
         self._store = DataStore(cfg.db_file)
         self._targets: dict[str, list[str]] = self._load_targets()
         self._discovery = UDPDiscovery(cfg.udp_port, cfg.port)
@@ -40,6 +41,15 @@ class App:
         self._api.state.shutdown_scheduled = False
         self._api.include_router(student_router)
         self._api.include_router(admin_router)
+
+    def _reset_session(self) -> None:
+        """Delete all files from a previous session before opening fresh ones."""
+        db = Path(self._cfg.db_file)
+        for p in [db, Path(str(db) + "-wal"), Path(str(db) + "-shm"),
+                  Path(self._cfg.targets_file), Path("master_state.json")]:
+            if p.exists():
+                p.unlink()
+                _LOG.info("Removed stale session file: %s", p)
 
     def _load_targets(self) -> dict[str, list[str]]:
         p = Path(self._cfg.targets_file)
