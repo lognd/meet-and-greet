@@ -61,8 +61,8 @@ build:
 
 .PHONY: serve
 serve:
-	@echo "Removing stale session state (mag.db, targets.json)..."
-	rm -f mag.db targets.json
+	@echo "Removing stale session state..."
+	rm -f mag.db mag.db-wal mag.db-shm targets.json
 	PYTHONPATH=src $(PYTHON) -m server
 
 # ── Test targets ──────────────────────────────────────────────────────────────
