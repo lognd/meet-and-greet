@@ -1,0 +1,223 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Each job builds one binary and uploads it as an artifact.
+# The final `release` job collects them all and publishes a GitHub Release.
+
+jobs:
+
+  # --------------------------------------------------------------------------
+  # Linux x86-64  (native on GitHub's x86-64 Ubuntu runner)
+  # --------------------------------------------------------------------------
+  build-linux-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        env:
+          XORKEY: ${{ secrets.XORKEY }}
+        run: |
+          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFETCHCONTENT_QUIET=ON \
+            -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
+            -DMAG_XORKEY="$KEY"
+          cmake --build build -j$(nproc) --target mag_client
+          strip build/mag_client
+          cp build/mag_client mag_client-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: mag_client-linux-x86_64
+
+  # --------------------------------------------------------------------------
+  # Linux arm64  (native on GitHub's arm64 Ubuntu runner)
+  # --------------------------------------------------------------------------
+  build-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        env:
+          XORKEY: ${{ secrets.XORKEY }}
+        run: |
+          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFETCHCONTENT_QUIET=ON \
+            -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
+            -DMAG_XORKEY="$KEY"
+          cmake --build build -j$(nproc) --target mag_client
+          strip build/mag_client
+          cp build/mag_client mag_client-linux-arm64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64
+          path: mag_client-linux-arm64
+
+  # --------------------------------------------------------------------------
+  # Windows x86-64  (MinGW-w64 cross on Ubuntu x86-64)
+  # --------------------------------------------------------------------------
+  build-windows-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW-w64
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            g++-mingw-w64-x86-64-posix \
+            gcc-mingw-w64-x86-64-posix \
+            binutils-mingw-w64-x86-64
+
+      - name: Build
+        env:
+          XORKEY: ${{ secrets.XORKEY }}
+        run: |
+          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFETCHCONTENT_QUIET=ON \
+            -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
+            -DMAG_XORKEY="$KEY" \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-windows-x86_64.cmake
+          cmake --build build -j$(nproc) --target mag_client
+          x86_64-w64-mingw32-strip build/mag_client.exe
+          cp build/mag_client.exe mag_client-windows-x86_64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: mag_client-windows-x86_64.exe
+
+  # --------------------------------------------------------------------------
+  # Windows arm64  (llvm-mingw cross on Ubuntu x86-64)
+  # --------------------------------------------------------------------------
+  build-windows-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install llvm-mingw
+        run: |
+          DOWNLOAD=$(curl -sf \
+            "https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest" \
+            | python3 -c "
+          import sys, json
+          r = json.load(sys.stdin)
+          assets = [a for a in r['assets']
+                    if 'ubuntu-20.04-x86_64' in a['name'] and 'ucrt' in a['name']]
+          print(assets[0]['browser_download_url'])
+          ")
+          curl -fL "$DOWNLOAD" -o /tmp/llvm-mingw.tar.xz
+          sudo tar -xf /tmp/llvm-mingw.tar.xz -C /opt
+          EXTRACTED=$(find /opt -maxdepth 1 -name 'llvm-mingw-*' -type d | head -1)
+          sudo mv "$EXTRACTED" /opt/llvm-mingw
+          echo "/opt/llvm-mingw/bin" >> $GITHUB_PATH
+          echo "LLVM_MINGW_ROOT=/opt/llvm-mingw" >> $GITHUB_ENV
+
+      - name: Build
+        env:
+          XORKEY: ${{ secrets.XORKEY }}
+        run: |
+          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFETCHCONTENT_QUIET=ON \
+            -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
+            -DMAG_XORKEY="$KEY" \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-windows-arm64.cmake \
+            -DLLVM_MINGW_ROOT="$LLVM_MINGW_ROOT"
+          cmake --build build -j$(nproc) --target mag_client
+          /opt/llvm-mingw/bin/aarch64-w64-mingw32-strip build/mag_client.exe
+          cp build/mag_client.exe mag_client-windows-arm64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64
+          path: mag_client-windows-arm64.exe
+
+  # --------------------------------------------------------------------------
+  # macOS universal  (arm64 + x86-64 lipo'd together on macos-latest)
+  # --------------------------------------------------------------------------
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build arm64 slice
+        env:
+          XORKEY: ${{ secrets.XORKEY }}
+        run: |
+          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
+          cmake -B build-arm64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFETCHCONTENT_QUIET=ON \
+            -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
+            -DMAG_XORKEY="$KEY" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake --build build-arm64 -j$(sysctl -n hw.logicalcpu) --target mag_client
+
+      - name: Build x86-64 slice
+        env:
+          XORKEY: ${{ secrets.XORKEY }}
+        run: |
+          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
+          cmake -B build-x86_64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFETCHCONTENT_QUIET=ON \
+            -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
+            -DMAG_XORKEY="$KEY" \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64
+          cmake --build build-x86_64 -j$(sysctl -n hw.logicalcpu) --target mag_client
+
+      - name: Combine into universal binary
+        run: |
+          lipo -create build-arm64/mag_client build-x86_64/mag_client \
+               -output mag_client-macos-universal
+          strip mag_client-macos-universal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: mag_client-macos-universal
+
+  # --------------------------------------------------------------------------
+  # Publish GitHub Release
+  # --------------------------------------------------------------------------
+  release:
+    needs:
+      - build-linux-x86_64
+      - build-linux-arm64
+      - build-windows-x86_64
+      - build-windows-arm64
+      - build-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/mag_client-linux-x86_64
+            dist/mag_client-linux-arm64
+            dist/mag_client-windows-x86_64.exe
+            dist/mag_client-windows-arm64.exe
+            dist/mag_client-macos-universal
