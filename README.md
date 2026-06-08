@@ -762,13 +762,14 @@ ring. Edge cases:
 
 ### UDP discovery
 
-The server runs two daemon threads:
+The server broadcasts `MAG_SERVER <ip> <port>` to `255.255.255.255` every 5
+seconds. Clients bind to the UDP port and listen passively for this packet —
+they send nothing. This keeps discovery traffic constant at one packet per 5
+seconds regardless of how many students are present, which matters at scale.
 
-- **Broadcaster**: sends `MAG_SERVER <ip> <port>` to `255.255.255.255` every 5 s.
-- **Listener**: responds to `MAG_WHO` unicast.
-
-The client sends `MAG_WHO` and listens for the response. On networks that
-block broadcast, pass `--server ip:port` on the command line.
+The worst-case wait for a client is one broadcast interval (5 seconds). On
+networks that block broadcast (AP isolation, NAT), pass `--server ip:port`
+on the command line to skip discovery entirely.
 
 ### Headless client mode
 
@@ -843,10 +844,11 @@ than a data file.
 
 **What is happening:**
 
-When the client starts it tries to find the server automatically using a UDP
-broadcast. A broadcast is a special network packet sent to every device on the
-local network simultaneously, asking "is there a MAG server here?" The server
-hears it and replies with its IP address.
+When the client starts it listens for a UDP broadcast from the server. The
+server sends a broadcast packet to every device on the local network every 5
+seconds announcing its IP address. Clients receive this packet silently — they
+send nothing themselves, which keeps the network quiet even with a hundred
+students.
 
 This fails in two common situations:
 

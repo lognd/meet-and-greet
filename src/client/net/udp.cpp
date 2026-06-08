@@ -1,6 +1,5 @@
 #include "network.h"
 
-#include <cstring>
 #include <string>
 #include <optional>
 #include <chrono>
@@ -57,12 +56,10 @@ std::optional<ServerInfo> discover_server(int udp_port, int timeout_sec) {
     sock_t sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock == INVALID) return std::nullopt;
 
-    // Allow broadcast
     int yes = 1;
-    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&yes), sizeof(yes));
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
 
-    // Bind to receive broadcasts
+    // Bind to receive the server's periodic broadcast.
     sockaddr_in local{};
     local.sin_family = AF_INET;
     local.sin_port = htons(static_cast<uint16_t>(udp_port));
@@ -72,7 +69,7 @@ std::optional<ServerInfo> discover_server(int udp_port, int timeout_sec) {
         return std::nullopt;
     }
 
-    // Set 1s recv timeout so we can retry
+    // 1 s recv timeout so the timeout_sec check runs at least once per second.
 #ifdef _WIN32
     DWORD tv_ms = 1000;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tv_ms), sizeof(tv_ms));
@@ -81,41 +78,30 @@ std::optional<ServerInfo> discover_server(int udp_port, int timeout_sec) {
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
 
-    // Broadcast address
-    sockaddr_in bcast{};
-    bcast.sin_family = AF_INET;
-    bcast.sin_port = htons(static_cast<uint16_t>(udp_port));
-    bcast.sin_addr.s_addr = INADDR_BROADCAST;
-
-    const char* who = "MAG_WHO";
+    // Passively listen for the server's periodic broadcast.
+    // The server sends "MAG_SERVER <ip> <port>" every 5 s; clients send nothing,
+    // keeping LAN traffic constant regardless of how many students are present.
     auto start = std::chrono::steady_clock::now();
 
     while (true) {
-        // Send MAG_WHO broadcast
-        sendto(sock, who, static_cast<int>(strlen(who)), 0,
-               reinterpret_cast<const sockaddr*>(&bcast), sizeof(bcast));
-
-        // Listen for 3 seconds worth of 1s receive windows
-        for (int attempt = 0; attempt < 3; ++attempt) {
-            char buf[256]{};
-            sockaddr_in from{};
-            socklen_t fromlen = sizeof(from);
-            int n = recvfrom(sock, buf, sizeof(buf) - 1, 0,
-                             reinterpret_cast<sockaddr*>(&from), &fromlen);
-            if (n > 0) {
-                auto info = parse_server_msg(buf, n);
-                if (info) {
-                    sock_close(sock);
-                    return info;
-                }
+        char buf[256]{};
+        sockaddr_in from{};
+        socklen_t fromlen = sizeof(from);
+        int n = recvfrom(sock, buf, sizeof(buf) - 1, 0,
+                         reinterpret_cast<sockaddr*>(&from), &fromlen);
+        if (n > 0) {
+            auto info = parse_server_msg(buf, n);
+            if (info) {
+                sock_close(sock);
+                return info;
             }
-            if (timeout_sec > 0) {
-                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::steady_clock::now() - start).count();
-                if (elapsed >= timeout_sec) {
-                    sock_close(sock);
-                    return std::nullopt;
-                }
+        }
+        if (timeout_sec > 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - start).count();
+            if (elapsed >= timeout_sec) {
+                sock_close(sock);
+                return std::nullopt;
             }
         }
     }
