@@ -77,12 +77,40 @@ def cmd_delete(uuid: str, toml: str = "app.toml"):
 
 
 @admin_app.command("assign")
-def cmd_assign(force: bool = False, toml: str = "app.toml"):
-    """Trigger target assignment."""
+def cmd_assign(
+    force: bool = False,
+    toml: str = "app.toml",
+    phantom_state: str = "master_state.json",
+):
+    """Trigger target assignment.
+
+    Phantom students are read automatically from master_state.json (created
+    by running the client with --master).  Use --phantom-state to override
+    the path, or pass an empty string to skip phantom detection.
+    """
     cfg = _load_cfg(toml)
-    data = _request("POST", f"{_base_url(cfg)}/admin/assign", _headers(cfg), {"force": force})
+    phantom_uuids: list[str] = []
+    if phantom_state:
+        p = Path(phantom_state)
+        if p.exists():
+            try:
+                phantoms = json.loads(p.read_text())
+                phantom_uuids = [e["uuid"] for e in phantoms if e.get("uuid")]
+                if phantom_uuids:
+                    console.print(
+                        f"[dim]Detected {len(phantom_uuids)} phantom(s) "
+                        f"from {phantom_state}[/dim]"
+                    )
+            except Exception as exc:
+                console.print(f"[yellow]Warning: could not read {phantom_state}: {exc}[/yellow]")
+
+    body = {"force": force, "phantom_uuids": phantom_uuids}
+    data = _request("POST", f"{_base_url(cfg)}/admin/assign", _headers(cfg), body)
     if data.get("ok"):
-        console.print(f"[green]Assigned targets[/green] for {data['students']} students")
+        console.print(
+            f"[green]Assigned targets[/green] for {data['students']} students "
+            f"({data.get('real', '?')} real, {data.get('phantoms', 0)} phantom)"
+        )
     else:
         console.print(f"[yellow]{data.get('reason')}[/yellow]")
 

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from server.db import DataStore, Student, Meeting, Announcement
 from server.data import PASSPHRASES, QUESTIONS_STANDARD, QUESTIONS_INTERESTING
 from server.logging import get_logger
+from server.app.admin import check_all_done
 
 _LOG = get_logger(__name__)
 router = APIRouter()
@@ -245,6 +246,10 @@ def answer(
     completed = _count_target_meetings(all_meetings, req.finder_uuid, my_targets)
     total = len(my_targets)
     _LOG.info("Meeting recorded: %s met %s (%d/%d)", req.finder_uuid, req.target_uuid, completed, total)
+
+    # Trigger auto-shutdown if every real student has finished.
+    check_all_done(request.app)
+
     return {"ok": True, "meetings_completed": completed, "total_targets": total}
 
 

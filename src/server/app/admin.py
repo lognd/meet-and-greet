@@ -1,5 +1,10 @@
 """Admin-only FastAPI routes. All require Authorization: Bearer <admin_token>."""
 
+import json
+import os
+import pathlib
+import signal
+import threading
 import time
 import uuid as _uuid
 
@@ -29,6 +34,57 @@ def get_store(request: Request) -> DataStore:
     return request.app.state.store
 
 
+# ---------------------------------------------------------------------------
+# Auto-exit helper
+# ---------------------------------------------------------------------------
+
+def check_all_done(app) -> bool:
+    """Return True if every non-phantom student with assigned targets has met
+    all of them.  When True on the first call, schedules a graceful SIGTERM
+    after a 30-second grace period so clients can view their stats screen.
+
+    Safe to call from any route handler (holds no locks for long).
+    """
+    targets: dict = app.state.targets
+    phantom_uuids: frozenset = getattr(app.state, "phantom_uuids", frozenset())
+    store: DataStore = app.state.store
+
+    real_targets = {u: vs for u, vs in targets.items() if u not in phantom_uuids}
+    if not real_targets:
+        return False
+
+    for student_uuid, target_list in real_targets.items():
+        if not target_list:
+            continue
+        my_targets = set(target_list)
+        meetings = store.meetings_for_student(student_uuid)
+        met: set[str] = set()
+        for m in meetings:
+            if m.finder_uuid == student_uuid and m.target_uuid in my_targets:
+                met.add(m.target_uuid)
+            elif m.target_uuid == student_uuid and m.finder_uuid in my_targets:
+                met.add(m.finder_uuid)
+        if len(met) < len(my_targets):
+            return False
+
+    # All real students finished.
+    if not getattr(app.state, "shutdown_scheduled", False):
+        app.state.shutdown_scheduled = True
+        _LOG.info("All students finished - shutting down in 30 s")
+
+        def _shutdown():
+            _LOG.info("Auto-shutdown triggered")
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        threading.Timer(30.0, _shutdown).start()
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
+
 class AnnounceRequest(BaseModel):
     message: str
 
@@ -40,7 +96,14 @@ class TimeRequest(BaseModel):
 
 class AssignRequest(BaseModel):
     force: bool = False
+    # UUIDs of phantom students registered via master mode.
+    # The CLI reads master_state.json and populates this automatically.
+    phantom_uuids: list[str] = []
 
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 @router.get("/students", dependencies=[Depends(_check_auth)])
 def list_students(store: DataStore = Depends(get_store)):
@@ -70,9 +133,8 @@ def delete_student(
     ok = store.delete_student(student_uuid)
     if not ok:
         raise HTTPException(404, "Student not found")
-    # remove from in-memory targets
     targets.pop(student_uuid, None)
-    for k in targets:
+    for k in list(targets):
         if student_uuid in targets[k]:
             targets[k].remove(student_uuid)
     _LOG.info("Admin deleted student %s", student_uuid)
@@ -89,19 +151,35 @@ def admin_assign(
     cfg = request.app.state.config
 
     if targets and not req.force:
-        return {"ok": False, "reason": "targets already assigned; use force=true to re-assign"}
+        return {
+            "ok": False,
+            "reason": "targets already assigned; use force=true to re-assign",
+        }
+
+    ph_set = frozenset(req.phantom_uuids)
+    # Persist phantom UUIDs in app state for the all-done check.
+    request.app.state.phantom_uuids = ph_set
 
     students = store.all_students()
     uuids = [s.uuid for s in students]
-    new_targets = assign_targets(uuids, cfg.targets_per_student)
+    new_targets = assign_targets(uuids, cfg.targets_per_student, ph_set)
     targets.clear()
     targets.update(new_targets)
 
-    # persist
-    import json, pathlib
     pathlib.Path(cfg.targets_file).write_text(json.dumps(targets))
-    _LOG.info("Admin assigned targets for %d students", len(students))
-    return {"ok": True, "students": len(students)}
+
+    n_real    = sum(1 for u in uuids if u not in ph_set)
+    n_phantom = len(ph_set)
+    _LOG.info(
+        "Admin assigned targets: %d real, %d phantom students",
+        n_real, n_phantom,
+    )
+    return {
+        "ok": True,
+        "students": len(students),
+        "real": n_real,
+        "phantoms": n_phantom,
+    }
 
 
 @router.post("/announce", dependencies=[Depends(_check_auth)])
