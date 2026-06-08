@@ -28,3 +28,8 @@ venv/
 *.sqlite
 
 # Config (keep app.toml.example, not app.toml with real tokens)
+app.toml
+
+# Session state (generated at runtime)
+targets.json
+master_state.json
