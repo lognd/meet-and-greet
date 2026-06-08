@@ -24,6 +24,8 @@ venv/
 
 # Runtime
 *.db
+*.db-wal
+*.db-shm
 *.log
 *.sqlite
 
