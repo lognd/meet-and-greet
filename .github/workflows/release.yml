@@ -145,7 +145,7 @@ jobs:
           import sys, json
           r = json.load(sys.stdin)
           assets = [a for a in r['assets']
-                    if 'ubuntu-20.04-x86_64' in a['name'] and 'ucrt' in a['name']]
+                    if 'ubuntu-' in a['name'] and 'x86_64' in a['name'] and 'ucrt' in a['name'] and a['name'].endswith('.tar.xz')]
           print(assets[0]['browser_download_url'])
           ")
           curl -fL "$DOWNLOAD" -o /tmp/llvm-mingw.tar.xz
