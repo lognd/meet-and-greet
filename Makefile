@@ -137,6 +137,24 @@ release-linux-x86_64: dist-dir
 	x86_64-linux-gnu-strip $(DIST_DIR)/mag_client-linux-x86_64
 	@echo "    $(DIST_DIR)/mag_client-linux-x86_64"
 
+# ── Linux x86-64 legacy (cross, static libstdc++/libgcc for old glibc hosts) ─
+# Targets Debian 12 / Ubuntu 20.04 and similarly aged distros.
+# Prereq: same cross toolchain as release-linux-x86_64.
+
+.PHONY: release-linux-x86_64-legacy
+release-linux-x86_64-legacy: dist-dir
+	@command -v x86_64-linux-gnu-g++ >/dev/null 2>&1 || { \
+		echo "ERROR: x86_64-linux-gnu-g++ not found."; \
+		echo "       Run: sudo scripts/setup-cross.sh"; exit 1; }
+	@echo "==> Linux x86-64 legacy (static libstdc++/libgcc)"
+	cmake -B build-release-linux-x86_64-legacy $(CMAKE_RELEASE_FLAGS) \
+		-DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-linux-x86_64.cmake \
+		-DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+	cmake --build build-release-linux-x86_64-legacy -j$(WORKERS) --target mag_client
+	cp build-release-linux-x86_64-legacy/mag_client $(DIST_DIR)/mag_client-linux-x86_64-legacy
+	x86_64-linux-gnu-strip $(DIST_DIR)/mag_client-linux-x86_64-legacy
+	@echo "    $(DIST_DIR)/mag_client-linux-x86_64-legacy"
+
 # ── Windows x86-64 (MinGW-w64 cross from arm64) ───────────────────────────────
 # Prereq: sudo apt install g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix
 
