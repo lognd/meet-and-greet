@@ -24,6 +24,9 @@ Students run:    mag_client                (compiled C++ binary, Windows / Linux
 9. [Cross-platform release builds](#cross-platform-release-builds)
 10. [Developer guide](#developer-guide)
 11. [Troubleshooting](#troubleshooting)
+    - [Windows: SmartScreen blocks the executable](#windows-windows-protected-your-pc-or-nothing-happens-when-double-clicking)
+    - [Linux: permission denied](#linux--chromeos-linux-permission-denied-or-nothing-happens)
+    - [Stuck on discovery screen](#stuck-on-the-discovery-screen-throbber-spinning-never-connects)
 
 ---
 
@@ -787,23 +790,143 @@ Two handlers configured by default in `src/server/logging/logger.toml`:
 
 ## Troubleshooting
 
-**Client stuck on "Connecting..."**
-Confirm the server IP and that UDP port 9875 is not blocked by a firewall.
-On Linux: `ss -ulnp | grep 9875`.
+### Running the client
 
-**"targets not yet assigned"**
+---
+
+#### Windows: "Windows protected your PC" or nothing happens when double-clicking
+
+Windows SmartScreen blocks executables downloaded from the internet that do
+not have a code-signing certificate. The binary is safe; it just has not paid
+for a certificate.
+
+**How to run it anyway:**
+
+1. Open PowerShell. You can do this in any of these ways:
+   - Press **Win + R**, type `powershell`, press Enter.
+   - Type `powershell` into the search bar in the Start menu and click
+     **Windows PowerShell**.
+   - Open File Explorer, navigate to the folder containing the binary,
+     hold **Shift** and right-click an empty area, then choose
+     **Open PowerShell window here**.
+
+2. In the PowerShell window, type the name of the binary and press Enter:
+   ```
+   .\mag_client-windows-x86_64.exe
+   ```
+   (Use `mag_client-windows-arm64.exe` if your laptop has an Arm processor,
+   such as a Snapdragon X or Microsoft SQ chip.)
+
+3. If SmartScreen still appears, click **More info** then **Run anyway**.
+
+Running via PowerShell instead of double-clicking bypasses most SmartScreen
+prompts because you are explicitly invoking the binary yourself.
+
+---
+
+#### Linux / ChromeOS Linux: "Permission denied" or nothing happens
+
+Downloaded files on Linux do not have the execute permission set by default.
+Open a terminal in the folder containing the binary and run:
+
+```bash
+chmod +x ./mag_client-linux-x86_64-legacy   # or whichever filename you downloaded
+./mag_client-linux-x86_64-legacy
+```
+
+`chmod +x` sets the execute bit, telling the OS this file is a program rather
+than a data file.
+
+---
+
+#### Stuck on the discovery screen (throbber spinning, never connects)
+
+**What is happening:**
+
+When the client starts it tries to find the server automatically using a UDP
+broadcast. A broadcast is a special network packet sent to every device on the
+local network simultaneously, asking "is there a MAG server here?" The server
+hears it and replies with its IP address.
+
+This fails in two common situations:
+
+**1. AP isolation (most school and home Wi-Fi routers)**
+
+Many routers have a feature called AP isolation (also called client isolation
+or station isolation). It prevents devices on the same Wi-Fi network from
+talking directly to each other. This is a security feature — it stops one
+student's laptop from attacking another — but it also blocks the broadcast
+packets MAG uses for discovery.
+
+**2. NAT between the client and the LAN (ChromeOS Linux, VMs, some VPNs)**
+
+ChromeOS runs its Linux environment (the penguin / Crostini) inside a small
+virtual machine. That VM sits behind a Network Address Translation (NAT) layer
+managed by ChromeOS. NAT means the VM has its own private IP address
+(typically `100.115.92.x`) and ChromeOS acts as a router between it and the
+real network. Outgoing connections from the VM work fine, but incoming
+broadcast packets sent to the Wi-Fi network never reach the VM because the NAT
+layer does not know to forward them in.
+
+**The fix — bypass discovery and connect directly:**
+
+The instructor finds their machine's IP address:
+
+```bash
+# Linux / macOS
+ip route get 1 | awk '{print $7; exit}'
+
+# Windows (look for IPv4 Address under your Wi-Fi adapter)
+ipconfig
+```
+
+Write the IP on the board. Students who are stuck on the discovery screen
+close the client and relaunch it with the `--server` flag:
+
+```
+# Linux / ChromeOS Linux
+./mag_client-linux-x86_64-legacy --server 192.168.1.42:9876
+
+# Windows (in PowerShell)
+.\mag_client-windows-x86_64.exe --server 192.168.1.42:9876
+
+# macOS
+./mag_client-macos-universal --server 192.168.1.42:9876
+```
+
+Replace `192.168.1.42` with the actual server IP. This skips the broadcast
+entirely and connects directly, so AP isolation and NAT are no longer a
+problem. Everything else (registration, the hunt, meetings) works identically.
+
+---
+
+### Server problems
+
+---
+
+#### "targets not yet assigned"
+
 Run `python -m server admin assign` before students try to hunt.
 
-**Phantom UUIDs not detected**
+---
+
+#### Phantom UUIDs not detected
+
 `master_state.json` must be in the directory where you run `admin assign`.
 Pass `--phantom-state /path/to/file.json` to override.
 
-**Re-running a session from scratch**
+---
+
+#### Re-running a session from scratch
+
 Delete `mag.db`, `mag.db-wal`, `mag.db-shm`, and `targets.json`, then restart
 the server. All students must re-register. Delete `master_state.json` too if
 you are changing the phantom set.
 
-**XORKEY mismatch**
+---
+
+#### XORKEY mismatch
+
 If clients register but their student ID lookup fails, the key baked into the
 binary does not match `encryption_key` in `app.toml`. Rebuild the client (or
 download the correct release) with the matching key.
