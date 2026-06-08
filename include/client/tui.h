@@ -10,7 +10,9 @@
 namespace mag::tui {
 
 // Student-facing full UI: discover -> register -> wait -> hunt -> stats.
-void run_tui(ftxui::ScreenInteractive& screen, int udp_port);
+// If server_addr is non-empty ("ip:port") UDP discovery is skipped entirely.
+void run_tui(ftxui::ScreenInteractive& screen, int udp_port,
+             const std::string& server_addr = {});
 
 // Staff-only master mode.  Uses its own ScreenInteractive internally.
 void screen_master(HttpClient& cli);

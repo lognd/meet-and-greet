@@ -143,7 +143,7 @@ int main(int argc, char* argv[]) {
     // run_tui uses a single screen.Loop() with a swappable router component
     // so the terminal alternate-screen buffer is never toggled between screens.
     auto screen = ftxui::ScreenInteractive::Fullscreen();
-    mag::tui::run_tui(screen, MAG_UDP_PORT);
+    mag::tui::run_tui(screen, MAG_UDP_PORT, args.server_addr);
 
     LOG("done");
     return 0;

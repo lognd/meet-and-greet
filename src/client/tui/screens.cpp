@@ -939,7 +939,8 @@ static void nav_hunt(
 
 namespace mag::tui {
 
-void run_tui(ScreenInteractive& screen, int udp_port) {
+void run_tui(ScreenInteractive& screen, int udp_port,
+             const std::string& server_addr) {
     LOG("run_tui: start");
 
     auto rtr = std::make_shared<RouterBase>();
@@ -975,14 +976,26 @@ void run_tui(ScreenInteractive& screen, int udp_port) {
         });
     };
 
-    LOG("phase", "discover");
-    nav_discover(screen, nav, udp_port, [&](mag::ServerInfo server) {
+    auto do_register = [&](mag::ServerInfo server) {
         LOG("server_ip",   server.ip);
         LOG("server_port", server.port);
         cli = mag::HttpClient{server.ip, server.port};
         LOG("phase", "register");
         nav_register(screen, nav, *cli, student, do_wait);
-    });
+    };
+
+    if (!server_addr.empty()) {
+        // --server supplied: skip UDP discovery, parse ip:port directly.
+        auto colon = server_addr.rfind(':');
+        mag::ServerInfo si;
+        si.ip   = server_addr.substr(0, colon);
+        si.port = std::stoi(server_addr.substr(colon + 1));
+        LOG("phase", "register_direct");
+        do_register(si);
+    } else {
+        LOG("phase", "discover");
+        nav_discover(screen, nav, udp_port, do_register);
+    }
 
     // Single blocking event loop.  Screen transitions replace the router's
     // inner component; this loop never re-enters raw terminal mode.
