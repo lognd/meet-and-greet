@@ -18,10 +18,12 @@ Students run:    mag_client                (compiled C++ binary, Windows / Linux
 3. [Building the client](#building-the-client)
 4. [Server configuration](#server-configuration)
 5. [Running a session](#running-a-session)
-6. [Admin CLI reference](#admin-cli-reference)
-7. [API reference](#api-reference)
-8. [Cross-platform release builds](#cross-platform-release-builds)
-9. [Developer guide](#developer-guide)
+6. [Phantom students](#phantom-students)
+7. [Admin CLI reference](#admin-cli-reference)
+8. [API reference](#api-reference)
+9. [Cross-platform release builds](#cross-platform-release-builds)
+10. [Developer guide](#developer-guide)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -90,8 +92,9 @@ The binary is `build/mag_client` (Linux/macOS) or `build/mag_client.exe`
 # Terminal 1 - start server
 python -m server
 
-# Terminal 2 - watch logs / run admin commands
-python -m server admin students
+# Terminal 2 - admin
+python -m server admin students    # see who has registered
+python -m server admin assign      # assign targets once everyone is in
 ```
 
 Students double-click `mag_client` (or run it from a terminal). The TUI
@@ -172,12 +175,14 @@ cryptographic security.
 **Change the key before each semester.** This ensures last year's binaries
 cannot register in this year's session.
 
+Generate a new key:
+
 ```bash
-# Generate a new key (Linux/macOS)
-python3 -c "import secrets; print(secrets.token_hex(16))"
+bash scripts/genkey.sh
 ```
 
-Then update both `app.toml` and rebuild the client.
+Then update both `app.toml` and rebuild the client (or push a new release tag
+so GitHub Actions rebuilds with the new key).
 
 ### Choosing `targets_per_student`
 
@@ -201,12 +206,10 @@ Typical classroom values: k=3 for a 10-minute session, k=5 for 20 minutes.
 3. Assign targets          python -m server admin assign
 4. Session runs            students wander and meet each other
 5. Monitor progress        python -m server admin students
-6. Close session           Ctrl-C the server
+6. Server auto-exits       30 s after the last real student finishes
 ```
 
-### Step by step
-
-#### Start the server
+### Start the server
 
 ```bash
 MAG_TOML=app.toml python -m server
@@ -215,7 +218,7 @@ MAG_TOML=app.toml python -m server
 The server logs to the console and to `mag.log`. It starts broadcasting its
 IP on UDP immediately so clients can discover it.
 
-#### Wait for students to register
+### Wait for students to register
 
 Students open `mag_client`. The TUI will:
 
@@ -224,13 +227,11 @@ Students open `mag_client`. The TUI will:
 3. Display their passphrase
 4. Show a waiting screen until targets are assigned
 
-You can see who has registered:
-
 ```bash
-python -m server admin students
+python -m server admin students    # see who is registered
 ```
 
-#### Assign targets
+### Assign targets
 
 Once all students are registered (or at any point you choose):
 
@@ -238,48 +239,110 @@ Once all students are registered (or at any point you choose):
 python -m server admin assign
 ```
 
-All waiting client screens will refresh automatically and show the list of
-people to find.
+All waiting client screens refresh automatically and show the hunt list. If
+you have phantom students set up (see below), run this command from the same
+directory as `master_state.json` and phantoms are detected automatically.
 
-#### During the session
-
-Send announcements that appear as overlays on all client screens:
+### During the session
 
 ```bash
 python -m server admin announce "Halfway done! Great work."
+python -m server admin time 5      # extend deadline by 5 minutes
+python -m server admin delete <uuid>   # remove a student who left early
 ```
 
-Adjust the deadline on the fly:
-
-```bash
-python -m server admin time --add-minutes 5   # extend by 5 minutes
-python -m server admin time --deadline 1720000000  # set absolute Unix timestamp
-```
-
-Remove a student who left early:
-
-```bash
-python -m server admin delete <uuid>
-```
-
-View leaderboard:
-
-```bash
-python -m server admin stats
-```
-
-#### Reconnecting
+### Reconnecting
 
 If a student's laptop crashes or they close the client, they can relaunch
 `mag_client` and enter the same student ID. The server recognises the
-obfuscated ID and restores their session (passphrase, completed meetings,
-targets) without any data loss.
+obfuscated ID and restores their session without data loss.
+
+### Auto-exit
+
+When every real student has finished all their meetings the server waits 30
+seconds (so clients can view their stats screen) then exits via SIGTERM.
+Phantom students are excluded from this check.
+
+---
+
+## Phantom students
+
+Phantoms are virtual students with no real person behind them. They are useful
+when class size does not divide evenly into the target graph, or when you want
+to test with fewer real devices.
+
+The server treats phantoms as real students for target assignment purposes, but
+excludes them from the completion check. When a real student enters a phantom's
+passphrase the meeting is recorded on both sides automatically (symmetric
+meeting logic), so the real student's progress advances correctly.
+
+**Guarantee:** no phantom is ever assigned another phantom as a target, because
+neither side could initiate the meeting.
+
+### Setting up phantoms
+
+#### Step 1 - start the server
+
+```bash
+python -m server
+```
+
+#### Step 2 - register real students
+
+Open one terminal per participant and run `mag_client`. Leave these running.
+
+#### Step 3 - register phantom students
+
+On the server machine, run master mode once per phantom:
+
+```bash
+./build/mag_client --master --name "Phantom One"
+./build/mag_client --master --name "Phantom Two"
+```
+
+Master mode registers the student, prints their UUID and passphrase, then
+appends to `master_state.json` in the current directory:
+
+```
+Registered: Phantom One (uuid=abc123..., passphrase=maple-river-seven)
+State written to master_state.json
+```
+
+#### Step 4 - assign targets
+
+```bash
+python -m server admin assign
+```
+
+The CLI reads `master_state.json` automatically:
+
+```
+Detected 2 phantom(s) from master_state.json
+Assigned targets for 7 students (5 real, 2 phantom)
+```
+
+To override the file path:
+
+```bash
+python -m server admin assign --phantom-state /other/path.json
+```
+
+To disable phantom detection entirely:
+
+```bash
+python -m server admin assign --phantom-state ""
+```
+
+#### Step 5 - run the activity normally
+
+Real students hunt as usual. Phantom meetings resolve instantly when the real
+student enters the passphrase.
 
 ---
 
 ## Admin CLI reference
 
-All admin commands require the server to be running.
+All commands require the server to be running.
 
 ```
 python -m server admin <command> [options]
@@ -288,22 +351,13 @@ python -m server admin <command> [options]
 | Command | Description |
 |---------|-------------|
 | `students` | List all registered students |
-| `assign` | Assign targets (k-regular graph) |
+| `assign` | Assign targets (reads `master_state.json` for phantoms automatically) |
 | `assign --force` | Re-assign targets even if already assigned |
+| `assign --phantom-state <path>` | Override phantom state file path |
 | `announce <message>` | Broadcast a message to all clients |
-| `time --add-minutes N` | Extend deadline by N minutes |
-| `time --deadline TS` | Set deadline to Unix timestamp TS |
+| `time <N>` | Extend deadline by N minutes |
 | `delete <uuid>` | Remove a student |
-| `stats` | Show completion leaderboard |
-
-Example:
-
-```bash
-python -m server admin assign
-python -m server admin announce "The hunt begins! Good luck."
-python -m server admin time --add-minutes 10
-python -m server admin stats
-```
+| `stats` | Show time remaining |
 
 ---
 
@@ -346,10 +400,7 @@ does not match the supplied name (prompts the client to offer a name update).
 
 Update a student's display name.
 
-Request:
-```json
-{ "forename": "Alice", "surname": "Smith" }
-```
+Request: `{ "forename": "Alice", "surname": "Smith" }`
 
 Response: `{ "ok": true }`
 
@@ -357,9 +408,8 @@ Response: `{ "ok": true }`
 
 #### `GET /targets/{uuid}`
 
-Get the list of targets assigned to a student.
-
-Returns 404 until `admin assign` has been run.
+Get the list of targets assigned to a student. Returns 404 until `assign` has
+been run.
 
 Response:
 ```json
@@ -376,9 +426,7 @@ Response:
 }
 ```
 
-`passphrase_hint` is the first word of the target's passphrase. It helps
-students narrow down who they are looking for without revealing the full
-passphrase needed to confirm the meeting.
+`passphrase_hint` is the first word of the target's passphrase.
 
 ---
 
@@ -388,13 +436,10 @@ Confirm a meeting. The finder submits the target's full passphrase.
 
 Request:
 ```json
-{
-  "finder_uuid": "<uuid>",
-  "passphrase": "fox-in-the-henhouse"
-}
+{ "finder_uuid": "<uuid>", "passphrase": "fox-in-the-henhouse" }
 ```
 
-Success response:
+Success:
 ```json
 {
   "ok": true,
@@ -404,7 +449,7 @@ Success response:
 }
 ```
 
-Failure response (passphrase wrong / not a target / already met):
+Failure:
 ```json
 { "ok": false, "reason": "that person is not one of your targets" }
 ```
@@ -413,25 +458,20 @@ Failure response (passphrase wrong / not a target / already met):
 
 #### `POST /answer`
 
-Submit answers to meeting questions and record the meeting.
+Submit answers and record the meeting.
 
 Request:
 ```json
 {
   "finder_uuid": "<uuid>",
   "target_uuid": "<uuid>",
-  "answers": [
-    { "question": "What is your favourite travel memory?", "answer": "..." }
-  ]
+  "answers": [{ "question": "...", "answer": "..." }]
 }
 ```
 
-Response:
-```json
-{ "ok": true, "meetings_completed": 2, "total_targets": 5 }
-```
+Response: `{ "ok": true, "meetings_completed": 2, "total_targets": 5 }`
 
-Returns 409 if the meeting was already recorded.
+Returns 409 if already recorded.
 
 ---
 
@@ -450,14 +490,29 @@ Response:
 }
 ```
 
-`finish_place` and `finish_ordinal` are `null` until the student completes all
-meetings.
+---
+
+#### `GET /pending_meet/{uuid}`
+
+Poll for a symmetric meeting notification. Called by the client's stats
+poller to detect when another student has entered this student's passphrase.
+Consumes the notification (one-shot).
+
+Response: `{ "pending": false }` or
+```json
+{
+  "pending": true,
+  "finder_uuid": "<uuid>",
+  "finder_forename": "Alice",
+  "questions": ["..."]
+}
+```
 
 ---
 
 #### `GET /time`
 
-Get the server clock and deadline.
+Get server clock and deadline.
 
 Response:
 ```json
@@ -468,13 +523,11 @@ Response:
 }
 ```
 
-`deadline` and `remaining_seconds` are `null` when no deadline is set.
-
 ---
 
 #### `GET /announcements?since=<timestamp>`
 
-Poll for announcements sent after `since` (Unix timestamp, default 0).
+Poll for announcements sent after `since` (default 0).
 
 Response:
 ```json
@@ -495,56 +548,80 @@ All require `Authorization: Bearer <admin_token>`.
 |--------|------|------|-------------|
 | `GET` | `/admin/students` | - | List all students |
 | `DELETE` | `/admin/student/{uuid}` | - | Remove a student |
-| `POST` | `/admin/assign` | `{"force": false}` | Assign/re-assign targets |
+| `POST` | `/admin/assign` | `{"force": false, "phantom_uuids": []}` | Assign targets |
 | `POST` | `/admin/announce` | `{"message": "..."}` | Broadcast announcement |
-| `POST` | `/admin/time` | `{"add_minutes": 5}` or `{"deadline": 1720001200}` | Set deadline |
+| `POST` | `/admin/time` | `{"add_minutes": 5}` | Set deadline |
 
 ---
 
 ## Cross-platform release builds
 
-`make release` cross-compiles all supported targets from a single Linux arm64
-host (e.g. Snapdragon X Elite / WSL2).
+### GitHub Actions (recommended)
 
-### One-time toolchain setup
+Push a version tag to trigger a release build for all platforms:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions builds five binaries in parallel and publishes them as a
+GitHub Release:
+
+| File | Platform |
+|------|----------|
+| `mag_client-linux-x86_64` | Linux, most desktops |
+| `mag_client-linux-arm64` | Linux, Raspberry Pi, Snapdragon |
+| `mag_client-windows-x86_64.exe` | Windows, most laptops |
+| `mag_client-windows-arm64.exe` | Windows on Arm |
+| `mag_client-macos-universal` | macOS, Intel and Apple Silicon |
+
+### Setting the encryption key for releases
+
+**Option A (recommended): set the XORKEY secret**
+
+1. Generate a key: `bash scripts/genkey.sh`
+2. Copy the output into **Settings -> Secrets -> Actions -> New repository
+   secret** with the name `XORKEY`.
+3. Put the same value in `app.toml -> encryption_key`.
+
+The secret persists across all future releases.
+
+**Option B: let the workflow generate one**
+
+If `XORKEY` is not set, the workflow generates a random key per release and
+uploads it as `XORKEY.txt` alongside the binaries. Download `XORKEY.txt` from
+the release assets and copy the value into `app.toml` before running the
+server.
+
+### Local cross-compilation
+
+`make release` cross-compiles all targets from a single Linux arm64 host
+(e.g. Snapdragon X Elite / WSL2).
+
+#### One-time toolchain setup
 
 ```bash
 sudo scripts/setup-cross.sh
 ```
 
-This installs:
-
-| What | How |
-|------|-----|
-| `g++-x86-64-linux-gnu` | apt — Linux x86-64 cross-compiler |
-| `g++-mingw-w64-x86-64-posix` | apt — Windows x86-64 (MinGW-w64) |
-| llvm-mingw | downloaded from GitHub — Windows arm64 |
-
-### Build
+#### Build
 
 ```bash
-make release                       # all four platforms
-make release-linux-arm64           # Linux arm64 (native, no toolchain needed)
-make release-linux-x86_64          # Linux x86-64
-make release-windows-x86_64        # Windows x86-64
-make release-windows-arm64         # Windows arm64
-make release-macos                 # macOS universal (macOS host only)
+make release XORKEY="$(grep encryption_key app.toml | cut -d'"' -f2)"
+
+# Individual targets:
+make release-linux-arm64
+make release-linux-x86_64
+make release-windows-x86_64
+make release-windows-arm64
+make release-macos          # macOS host only
 ```
 
-Binaries land in `dist/`:
+Binaries land in `dist/`. Windows binaries are statically linked (no DLL
+runtime required).
 
-```
-dist/
-  mag_client-linux-arm64
-  mag_client-linux-x86_64
-  mag_client-windows-x86_64.exe
-  mag_client-windows-arm64.exe
-  mag_client-macos-universal        (macOS host only)
-```
-
-Windows binaries are statically linked (no DLL runtime required).
-
-### Toolchain files
+#### Toolchain files
 
 | File | Target |
 |------|--------|
@@ -552,19 +629,10 @@ Windows binaries are statically linked (no DLL runtime required).
 | `cmake/toolchain-windows-x86_64.cmake` | Windows x86-64 via MinGW-w64 posix |
 | `cmake/toolchain-windows-arm64.cmake` | Windows arm64 via llvm-mingw clang++ |
 
-The llvm-mingw root defaults to `/opt/llvm-mingw` (where `setup-cross.sh`
-puts it). Override with `LLVM_MINGW_ROOT`:
+The llvm-mingw root defaults to `/opt/llvm-mingw`. Override with:
 
 ```bash
 make release-windows-arm64 LLVM_MINGW_ROOT=/usr/local/llvm-mingw
-```
-
-### Changing the encryption key for distribution
-
-Always bake the key that matches your `app.toml` into the binaries:
-
-```bash
-make release XORKEY="$(grep encryption_key app.toml | cut -d'"' -f2)"
 ```
 
 ---
@@ -581,6 +649,10 @@ meet-and-greet/
   pyproject.toml        Python package manifest
   pytest.ini            test runner config
 
+  scripts/
+    genkey.sh           generate a random 32-char hex XOR key
+    setup-cross.sh      install cross-compilers for local release builds
+
   src/
     server/             Python FastAPI server
       __main__.py       entry point (server or admin CLI)
@@ -588,7 +660,7 @@ meet-and-greet/
         app.py          FastAPI application + lifespan
         config.py       AppConfig Pydantic model
         routes.py       student-facing endpoints
-        admin.py        admin-only endpoints
+        admin.py        admin-only endpoints + check_all_done()
       cli/
         admin.py        Typer CLI (python -m server admin ...)
       crypto/
@@ -602,7 +674,7 @@ meet-and-greet/
       discovery/
         udp.py          UDP broadcast / listener daemon threads
       graph/
-        targets.py      k-regular graph assignment algorithm
+        targets.py      k-regular graph assignment + phantom grafting
       logging/
         logger.py       logging config loader
         logger.toml     handler / formatter / logger config
@@ -623,24 +695,11 @@ meet-and-greet/
 
   tests/
     server/             pytest unit + integration tests
-      conftest.py       TestClient fixtures, shared config
-      test_admin.py     admin endpoint tests
-      test_cipher.py    XOR cipher round-trip tests
-      test_config.py    AppConfig loading tests
-      test_data.py      passphrase / question bank tests
-      test_graph.py     k-regular graph tests
-      test_models.py    Pydantic model tests
-      test_routes.py    student endpoint integration tests
-      test_store.py     DataStore unit tests
-      test_system.py    real server subprocess tests
     client/             Catch2 C++ tests
-      test_data.cpp     data struct + cipher tests
-      test_network.cpp  HttpClient integration tests (mock server)
-    system/             full system tests
+    system/             full system tests (real subprocesses)
       harness.py        ServerProcess + SimStudent helpers
-      conftest.py       platform markers
-      test_binary.py    headless client binary tests
-      test_scale.py     120-student scale + edge-case tests
+      test_binary.py    headless binary tests
+      test_scale.py     120-student scale test
 
   docs/
     design/README.md    full architecture and protocol specification
@@ -658,54 +717,18 @@ make test-binary        # headless binary tests (requires: make build first)
 make test-scale         # 120-student test only
 ```
 
-The system tests start real server subprocesses and use isolated temporary
-directories. They take about 20-30 s on a modern laptop.
-
-Binary tests (`test_binary.py`) are marked `@posix_only` and
-`@requires_binary`. They are automatically skipped if the binary is not built
-or the OS is Windows.
-
-### Adding tests
-
-Server tests live in `tests/server/`. They use `TestClient` from Starlette
-and never start a real subprocess (fast). See `tests/server/conftest.py` for
-the fixture set.
-
-System tests live in `tests/system/`. Use `ServerProcess` as a context
-manager to get an isolated server, and `SimStudent` to drive HTTP interactions:
-
-```python
-from tests.system.harness import ServerProcess, SimStudent
-
-def test_something():
-    with ServerProcess(port=19899, udp_port=19900) as srv:
-        s = SimStudent(123456, "Alice", "Smith", srv)
-        s.register()
-        srv.assign_targets()
-        targets = s.get_targets()
-        ...
-```
-
-Pick port numbers that are not used by any other test module to avoid
-conflicts when tests run in parallel.
-
 ### Database
 
-The server uses SQLite with WAL journal mode. A single `DataStore` instance
-is shared across all FastAPI threadpool workers. A `threading.Lock` serialises
-every connection access because Python's `sqlite3.Connection` is not
-thread-safe even with `check_same_thread=False`.
+The server uses SQLite with WAL journal mode. A single `DataStore` instance is
+shared across all FastAPI threadpool workers. A `threading.Lock` serialises
+every connection access.
 
-Critical race conditions that required atomic operations:
+Critical atomic operations:
 
 - **Passphrase assignment**: `register_new_student()` reads used passphrases,
   picks an available one, and inserts the student record under one lock.
-  Without this, concurrent registrations can pick the same passphrase.
-
 - **Meeting recording**: `add_meeting_if_not_exists()` checks for an existing
-  meeting (in either direction) and inserts under one lock. Without this,
-  two concurrent `/answer` calls for the same pair can both succeed, creating
-  duplicate records that inflate meeting counts.
+  meeting (in either direction) and inserts under one lock.
 
 ### Encryption
 
@@ -713,117 +736,86 @@ Student IDs are obfuscated with XOR before leaving the device. The same logic
 runs in Python (server) and C++ (client):
 
 ```python
-# Python
 def encrypt_id(student_id: int, key_hex: str) -> str:
     key = bytes.fromhex(key_hex)
     plain = str(student_id).encode()
     return bytes(b ^ key[i % len(key)] for i, b in enumerate(plain)).hex()
 ```
 
-```cpp
-// C++ (compile-time key via MAG_XORKEY define)
-inline std::string encrypt_id(uint64_t id) {
-    constexpr std::string_view key_hex = MAG_XORKEY;
-    // ... same XOR logic
-}
-```
-
-This is obfuscation, not encryption. A determined attacker with both a
-compiled binary and a network capture can recover raw IDs. It is intended
-only to prevent casual interception on an open LAN.
+This is obfuscation, not encryption. It prevents casual interception on an
+open LAN but is not resistant to an attacker with both the binary and a
+network capture.
 
 ### Target graph algorithm
 
-Targets are assigned as a k-regular graph via circular shift:
-
-```python
-# Pseudocode
-for i, uuid in enumerate(uuids):
-    targets[uuid] = [uuids[(i + j) % n] for j in range(1, k + 1)]
-```
-
-Edge cases:
+Targets are assigned as a k-regular graph via circular shift on a shuffled
+ring. Edge cases:
 
 - **n <= k**: complete graph (everyone meets everyone).
-- **n * k is odd**: k is reduced by 1 (a regular graph requires an even sum
-  of degrees).
+- **n * k is odd**: k is reduced by 1 (a regular graph requires an even degree sum).
+- **Phantoms**: grafted onto the real graph after construction; each phantom is
+  assigned min(k, n_real) random real students. No phantom-phantom edges are
+  ever created.
 
 ### UDP discovery
 
 The server runs two daemon threads:
 
-- **Broadcaster**: sends `MAG_SERVER <ip> <port>` to `255.255.255.255` every
-  5 s on the UDP port.
-- **Listener**: responds to `MAG_WHO` unicast with `MAG_SERVER <ip> <port>`.
+- **Broadcaster**: sends `MAG_SERVER <ip> <port>` to `255.255.255.255` every 5 s.
+- **Listener**: responds to `MAG_WHO` unicast.
 
-The C++ client sends a broadcast `MAG_WHO` and listens for the response. On
-networks that block broadcast, students can bypass discovery with
-`--server ip:port` (available in headless mode and on the command line).
+The client sends `MAG_WHO` and listens for the response. On networks that
+block broadcast, pass `--server ip:port` on the command line.
 
 ### Headless client mode
-
-The client binary accepts `--headless <student_id>` for scripted use and
-system testing:
 
 ```
 mag_client --headless 123456 --server 127.0.0.1:9876
 ```
 
-Output is line-oriented `KEY=VALUE`:
-
-```
-UUID=<uuid4>
-PASS=eagle-has-landed
-NEW=1
-```
-
-Exit codes:
-
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Server not found (UDP timeout) |
-| 2 | Registration failed |
-| 3 | Bad arguments |
+Output is line-oriented `KEY=VALUE`. Exit codes: 0 success, 1 server not
+found, 2 registration failed, 3 bad arguments.
 
 ### Logging
 
-The server uses Python's standard `logging` with a TOML-based config at
-`src/server/logging/logger.toml`. Two handlers are configured by default:
+Two handlers configured by default in `src/server/logging/logger.toml`:
 
 - **console**: INFO level, colourised via `rich`
 - **file**: DEBUG level, rotating (10 MB per file, 3 backups)
 
-Override the log file path in `app.toml` (`log_file` key).
+---
 
-### Code style
+## Troubleshooting
 
-- Python: no type: ignore comments; Pydantic v2 models for all data transfer;
-  FastAPI dependency injection for store / config / targets.
-- C++20: `std::optional`, structured bindings, `using namespace` avoided in
-  headers.
-- No comments that describe *what* the code does; only comments for non-obvious
-  *why* (invariants, workarounds, subtle constraints).
+**Client stuck on "Connecting..."**
+Confirm the server IP and that UDP port 9875 is not blocked by a firewall.
+On Linux: `ss -ulnp | grep 9875`.
 
-### Making a new release
+**"targets not yet assigned"**
+Run `python -m server admin assign` before students try to hunt.
 
-1. Update the version in `pyproject.toml`.
-2. Decide on a new `encryption_key` (see [Choosing encryption_key](#choosing-encryption_key)).
-3. Update `app.toml.example` with the new key.
-4. Run the cross-compiler setup if not already done: `sudo scripts/setup-cross.sh`
-5. `make release XORKEY="<new-key>"` — produces four platform binaries in `dist/`.
-6. For macOS, run `make release-macos XORKEY="<new-key>"` on a macOS host and
-   add `dist/mag_client-macos-universal` to the release.
-7. Commit, tag, distribute `dist/` to students.
+**Phantom UUIDs not detected**
+`master_state.json` must be in the directory where you run `admin assign`.
+Pass `--phantom-state /path/to/file.json` to override.
+
+**Re-running a session from scratch**
+Delete `mag.db`, `mag.db-wal`, `mag.db-shm`, and `targets.json`, then restart
+the server. All students must re-register. Delete `master_state.json` too if
+you are changing the phantom set.
+
+**XORKEY mismatch**
+If clients register but their student ID lookup fails, the key baked into the
+binary does not match `encryption_key` in `app.toml`. Rebuild the client (or
+download the correct release) with the matching key.
 
 ---
 
 ## Security notes
 
-- The admin token is sent as a Bearer token in plain HTTP. Use this system only
-  on a trusted LAN (classroom Wi-Fi, direct ethernet, etc.).
+- The admin token is sent as a Bearer token over plain HTTP. Use this system
+  only on a trusted LAN (classroom Wi-Fi, direct ethernet, etc.).
 - Student IDs are XOR-obfuscated, not encrypted. Do not rely on this for FERPA
   or similar privacy compliance.
 - Rotate `encryption_key` and `admin_token` before each semester.
-- The server has no rate limiting. Malicious students on the LAN can spam the
-  API. If that is a concern, put nginx in front with a rate-limit rule.
+- The server has no rate limiting. If that is a concern, put nginx in front
+  with a rate-limit rule.

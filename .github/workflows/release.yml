@@ -5,29 +5,61 @@ on:
     tags:
       - 'v*'
 
-# Each job builds one binary and uploads it as an artifact.
-# The final `release` job collects them all and publishes a GitHub Release.
+# If the XORKEY repository secret is set, all binaries are built with that
+# key.  If it is absent, a random key is generated once, shared across all
+# build jobs, and uploaded as XORKEY.txt in the release so the instructor
+# knows what value to put in app.toml.
+#
+# To set the secret permanently:
+#   1. Run:  bash scripts/genkey.sh
+#   2. Copy the output into Settings -> Secrets -> Actions -> XORKEY
+#   3. Put the same value in app.toml -> encryption_key
 
 jobs:
+
+  # --------------------------------------------------------------------------
+  # Generate (or pass through) the XOR key once so every build job uses the
+  # same value.  Outputs: xorkey (the 32-char hex string).
+  # --------------------------------------------------------------------------
+  keygen:
+    runs-on: ubuntu-latest
+    outputs:
+      xorkey: ${{ steps.resolve.outputs.xorkey }}
+      generated: ${{ steps.resolve.outputs.generated }}
+    steps:
+      - name: Resolve key
+        id: resolve
+        env:
+          XORKEY_SECRET: ${{ secrets.XORKEY }}
+        run: |
+          if [ -n "$XORKEY_SECRET" ]; then
+            echo "xorkey=$XORKEY_SECRET"   >> $GITHUB_OUTPUT
+            echo "generated=false"         >> $GITHUB_OUTPUT
+            echo "Using XORKEY from repository secret."
+          else
+            KEY=$(python3 -c "import secrets; print(secrets.token_hex(16))")
+            echo "xorkey=$KEY"             >> $GITHUB_OUTPUT
+            echo "generated=true"          >> $GITHUB_OUTPUT
+            echo "No XORKEY secret found - generated a new key for this release."
+            echo "Download XORKEY.txt from the release assets and put the value in app.toml."
+          fi
 
   # --------------------------------------------------------------------------
   # Linux x86-64  (native on GitHub's x86-64 Ubuntu runner)
   # --------------------------------------------------------------------------
   build-linux-x86_64:
+    needs: keygen
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Build
-        env:
-          XORKEY: ${{ secrets.XORKEY }}
         run: |
-          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DFETCHCONTENT_QUIET=ON \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
-            -DMAG_XORKEY="$KEY"
+            -DMAG_XORKEY="${{ needs.keygen.outputs.xorkey }}"
           cmake --build build -j$(nproc) --target mag_client
           strip build/mag_client
           cp build/mag_client mag_client-linux-x86_64
@@ -41,20 +73,18 @@ jobs:
   # Linux arm64  (native on GitHub's arm64 Ubuntu runner)
   # --------------------------------------------------------------------------
   build-linux-arm64:
+    needs: keygen
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
       - name: Build
-        env:
-          XORKEY: ${{ secrets.XORKEY }}
         run: |
-          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DFETCHCONTENT_QUIET=ON \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
-            -DMAG_XORKEY="$KEY"
+            -DMAG_XORKEY="${{ needs.keygen.outputs.xorkey }}"
           cmake --build build -j$(nproc) --target mag_client
           strip build/mag_client
           cp build/mag_client mag_client-linux-arm64
@@ -68,6 +98,7 @@ jobs:
   # Windows x86-64  (MinGW-w64 cross on Ubuntu x86-64)
   # --------------------------------------------------------------------------
   build-windows-x86_64:
+    needs: keygen
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,15 +112,12 @@ jobs:
             binutils-mingw-w64-x86-64
 
       - name: Build
-        env:
-          XORKEY: ${{ secrets.XORKEY }}
         run: |
-          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DFETCHCONTENT_QUIET=ON \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
-            -DMAG_XORKEY="$KEY" \
+            -DMAG_XORKEY="${{ needs.keygen.outputs.xorkey }}" \
             -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-windows-x86_64.cmake
           cmake --build build -j$(nproc) --target mag_client
           x86_64-w64-mingw32-strip build/mag_client.exe
@@ -104,6 +132,7 @@ jobs:
   # Windows arm64  (llvm-mingw cross on Ubuntu x86-64)
   # --------------------------------------------------------------------------
   build-windows-arm64:
+    needs: keygen
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -127,15 +156,12 @@ jobs:
           echo "LLVM_MINGW_ROOT=/opt/llvm-mingw" >> $GITHUB_ENV
 
       - name: Build
-        env:
-          XORKEY: ${{ secrets.XORKEY }}
         run: |
-          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DFETCHCONTENT_QUIET=ON \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
-            -DMAG_XORKEY="$KEY" \
+            -DMAG_XORKEY="${{ needs.keygen.outputs.xorkey }}" \
             -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-windows-arm64.cmake \
             -DLLVM_MINGW_ROOT="$LLVM_MINGW_ROOT"
           cmake --build build -j$(nproc) --target mag_client
@@ -151,33 +177,28 @@ jobs:
   # macOS universal  (arm64 + x86-64 lipo'd together on macos-latest)
   # --------------------------------------------------------------------------
   build-macos:
+    needs: keygen
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Build arm64 slice
-        env:
-          XORKEY: ${{ secrets.XORKEY }}
         run: |
-          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
           cmake -B build-arm64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DFETCHCONTENT_QUIET=ON \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
-            -DMAG_XORKEY="$KEY" \
+            -DMAG_XORKEY="${{ needs.keygen.outputs.xorkey }}" \
             -DCMAKE_OSX_ARCHITECTURES=arm64
           cmake --build build-arm64 -j$(sysctl -n hw.logicalcpu) --target mag_client
 
       - name: Build x86-64 slice
-        env:
-          XORKEY: ${{ secrets.XORKEY }}
         run: |
-          KEY="${XORKEY:-deadbeefcafebabedeadbeefcafebabe}"
           cmake -B build-x86_64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DFETCHCONTENT_QUIET=ON \
             -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
-            -DMAG_XORKEY="$KEY" \
+            -DMAG_XORKEY="${{ needs.keygen.outputs.xorkey }}" \
             -DCMAKE_OSX_ARCHITECTURES=x86_64
           cmake --build build-x86_64 -j$(sysctl -n hw.logicalcpu) --target mag_client
 
@@ -197,6 +218,7 @@ jobs:
   # --------------------------------------------------------------------------
   release:
     needs:
+      - keygen
       - build-linux-x86_64
       - build-linux-arm64
       - build-windows-x86_64
@@ -211,6 +233,21 @@ jobs:
           merge-multiple: true
           path: dist/
 
+      # Write XORKEY.txt only when the key was auto-generated (no secret set).
+      # Instructors download this file and copy the value into app.toml.
+      - name: Write XORKEY.txt
+        if: needs.keygen.outputs.generated == 'true'
+        run: |
+          cat > dist/XORKEY.txt <<'MSG'
+          This release was built with an auto-generated encryption key because
+          the XORKEY repository secret was not set.
+
+          Copy the value below into app.toml -> encryption_key before starting
+          the server.  Keep this file private.
+
+          MSG
+          echo "${{ needs.keygen.outputs.xorkey }}" >> dist/XORKEY.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -221,3 +258,4 @@ jobs:
             dist/mag_client-windows-x86_64.exe
             dist/mag_client-windows-arm64.exe
             dist/mag_client-macos-universal
+            dist/XORKEY.txt

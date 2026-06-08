@@ -1,0 +1,18 @@
+[
+  {
+    "forename": "Phantom",
+    "found": true,
+    "passphrase": "operation-dark-horse",
+    "student_id": 123456789,
+    "surname": "One",
+    "uuid": "89c5fcfa-45b5-4717-881f-0bffc70b3008"
+  },
+  {
+    "forename": "Phantom",
+    "found": true,
+    "passphrase": "falcon-has-the-package",
+    "student_id": 987654321,
+    "surname": "Two",
+    "uuid": "4235e02b-7e0d-455d-aa51-dd7e9243cbe7"
+  }
+]
