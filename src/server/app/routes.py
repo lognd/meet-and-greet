@@ -273,9 +273,11 @@ def stats(
         if place:
             ordinal = _ordinal(place)
 
+    met_uuids = list(_met_targets(all_meetings, student_uuid, my_target_uuids))
     return {
         "meetings_completed": completed,
         "total_targets": total,
+        "met_target_uuids": met_uuids,
         "finish_place": place,
         "finish_ordinal": ordinal,
         "finished_at": finished_at,

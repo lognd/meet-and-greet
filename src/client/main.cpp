@@ -3,6 +3,8 @@
 #include "network.h"
 #include "tui.h"
 
+#include <ftxui/component/screen_interactive.hpp>
+
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -121,8 +123,12 @@ int main(int argc, char* argv[]) {
 
     if (args.headless) return run_headless(args);
 
+    // One ScreenInteractive for the whole session. Re-entering raw mode
+    // between screens causes a visible terminal flash; sharing it avoids that.
+    auto screen = ftxui::ScreenInteractive::Fullscreen();
+
     LOG("phase", "discover");
-    mag::ServerInfo server = mag::tui::screen_discover(MAG_UDP_PORT);
+    mag::ServerInfo server = mag::tui::screen_discover(screen, MAG_UDP_PORT);
     LOG("server_ip",   server.ip);
     LOG("server_port", server.port);
     mag::HttpClient cli{server.ip, server.port};
@@ -134,28 +140,25 @@ int main(int argc, char* argv[]) {
     }
 
     LOG("phase", "register");
-    mag::Student student = mag::tui::screen_register(cli);
+    mag::Student student = mag::tui::screen_register(screen, cli);
     LOG("uuid",       student.uuid);
     LOG("passphrase", student.passphrase);
     LOG("is_new",     student.is_new);
 
     LOG("phase", "wait");
-    auto targets = mag::tui::screen_wait(cli, student);
+    auto targets = mag::tui::screen_wait(screen, cli, student);
     LOG("targets_count", static_cast<int>(targets.size()));
 
-    // Empty targets means the user quit (Ctrl+C exits FTXUI loop without
-    // re-raising SIGINT) or targets were never assigned. Don't proceed to
-    // stats which would falsely show "you found all your targets".
     if (targets.empty()) {
         LOG("done: no targets, exiting");
         return 0;
     }
 
     LOG("phase", "hunt");
-    mag::tui::screen_hunt(cli, student, targets);
+    mag::tui::screen_hunt(screen, cli, student, targets);
 
     LOG("phase", "stats");
-    mag::tui::screen_stats(cli, student);
+    mag::tui::screen_stats(screen, cli, student);
 
     LOG("done");
     return 0;

@@ -57,6 +57,7 @@ struct HttpClient {
         int total{0};
         int place{0};
         std::string ordinal;
+        std::vector<std::string> met_uuids;  // target UUIDs we have a recorded meeting with
     };
     std::optional<Stats> get_stats(const std::string& uuid);
 

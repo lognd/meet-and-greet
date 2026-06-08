@@ -155,8 +155,11 @@ std::optional<HttpClient::Stats> HttpClient::get_stats(const std::string& uuid) 
     Stats s;
     s.completed = jget<int>(j, "meetings_completed", 0);
     s.total     = jget<int>(j, "total_targets", 0);
-    s.place     = jget<int>(j, "finish_place", 0);      // null when not yet finished
+    s.place     = jget<int>(j, "finish_place", 0);
     s.ordinal   = jget<std::string>(j, "finish_ordinal", "");
+    if (j.contains("met_target_uuids") && j["met_target_uuids"].is_array())
+        for (const auto& u : j["met_target_uuids"])
+            if (u.is_string()) s.met_uuids.push_back(u.get<std::string>());
     return s;
 }
 
